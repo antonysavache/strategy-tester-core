@@ -1,18 +1,13 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-
-interface CandleData {
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  rsi?: number;
-  ema?: number;
-  dateUTC2?: string;
-}
+import { MarketDataService, CandleData } from './services/market-data.service';
+import { IndicatorsService, CandleWithIndicators } from './services/indicators.service';
+import { LongStrategyService, StrategyParams } from './services/long-strategy.service';
+import { ShortStrategyService, ShortStrategyParams } from './services/short-strategy.service';
+import { TradingAnalyticsService, TradingSessionAnalytics } from './services/trading-analytics.service';
+import { CombinedStrategyService, CombinedStrategyParams } from './services/combined-strategy.service';
+import { CycleManagerService } from './services/cycle-manager.service';
 
 @Component({
   selector: 'app-technical-indicators',
@@ -24,7 +19,7 @@ interface CandleData {
 
       <div class="upload-section">
         <input type="file" (change)="onFileSelected($event)" accept=".csv" />
-        <button (click)="processData()" [disabled]="!csvData">Calculate Indicators</button>
+        <button (click)="processData()" [disabled]="!csvData">Calculate Indicators & Test Strategies</button>
       </div>
 
       <div class="strategy-params" *ngIf="csvData">
@@ -49,173 +44,199 @@ interface CandleData {
           <label for="avgThreshold">Averaging Threshold %:</label>
           <input type="number" id="avgThreshold" [(ngModel)]="averagingThreshold" min="0.1" max="5" step="0.1" />
         </div>
+        <div class="param-row">
+          <label for="cycleThreshold">Cycle Profit Threshold %:</label>
+          <input type="number" id="cycleThreshold" [(ngModel)]="cycleProfitThreshold" min="0.1" max="2.0" step="0.1" />
+        </div>
         <button (click)="processData()" class="recalculate-btn">Recalculate with New Parameters</button>
       </div>
 
       <div class="stats" *ngIf="candles.length > 0">
         <p>Total candles: {{ candles.length }}</p>
         <p>RSI Period: {{ rsiPeriod }}</p>
-        <p>RSI Oversold: {{ rsiOversold }}</p>
-        <p>Min Profit: {{ minProfitPercent }}%</p>
-        <p>Averaging Threshold: {{ averagingThreshold }}%</p>
+        <p>RSI Oversold: {{ rsiOversold }} | RSI Overbought: {{ rsiOverbought }}</p>
+        <p>Min Profit: {{ minProfitPercent }}% | Averaging Threshold: {{ averagingThreshold }}%</p>
+        <p>Cycle Profit Threshold: {{ cycleProfitThreshold }}%</p>
         <p>EMA Period: 183</p>
       </div>
 
-      <div class="table-container" *ngIf="candles.length > 0">
-        <table>
-          <thead>
-            <tr>
-              <th>Time (UTC+2)</th>
-              <th>Open</th>
-              <th>High</th>
-              <th>Low</th>
-              <th>Close</th>
-              <th>Volume</th>
-              <th>RSI ({{ rsiPeriod }})</th>
-              <th>EMA (183)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let candle of candles; trackBy: trackByTimestamp">
-              <td>{{ candle.dateUTC2 }}</td>
-              <td>{{ candle.open | number:'1.6-6' }}</td>
-              <td>{{ candle.high | number:'1.6-6' }}</td>
-              <td>{{ candle.low | number:'1.6-6' }}</td>
-              <td>{{ candle.close | number:'1.6-6' }}</td>
-              <td>{{ candle.volume | number:'1.3-3' }}</td>
-              <td>{{ candle.rsi ? (candle.rsi | number:'1.2-2') : '-' }}</td>
-              <td>{{ candle.ema ? (candle.ema | number:'1.6-6') : '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="cycles-container" *ngIf="sessionAnalytics">
+        <h3>Trading Cycles Analysis</h3>
+
+        <div class="session-summary">
+          <h4>📊 Session Overview</h4>
+          <p><strong>Total Cycles:</strong> {{ sessionAnalytics.totalCycles }}</p>
+          <p><strong>Closed Cycles:</strong> {{ sessionAnalytics.closedCycles }}</p>
+          <p><strong>Open Cycles:</strong> {{ sessionAnalytics.openCycles }}</p>
+          <p><strong>💰 Total Realized PnL:</strong> {{ sessionAnalytics.totalRealizedPnl | number:'1.2-2' }}%</p>
+          <p><strong>💸 Total Unrealized PnL:</strong> {{ sessionAnalytics.totalUnrealizedPnl | number:'1.2-2' }}%</p>
+          <p><strong>🏆 Total PnL:</strong> {{ sessionAnalytics.totalPnl | number:'1.2-2' }}%</p>
+          <p><strong>📈 Win Rate:</strong> {{ sessionAnalytics.winRate | number:'1.1-1' }}%</p>
+          <p><strong>🔄 Forced Closures:</strong> {{ sessionAnalytics.forcedClosures }}</p>
+        </div>
+
+        <div class="cycles-list">
+          <div *ngFor="let cycle of sessionAnalytics.cycles" class="cycle-card" [ngClass]="{'cycle-open': cycle.status === 'OPEN', 'cycle-closed': cycle.status === 'CLOSED'}">
+            <div class="cycle-header">
+              <h4>🔄 Cycle {{ cycle.cycleId }}
+                <span class="cycle-status" [ngClass]="cycle.status.toLowerCase()">{{ cycle.status }}</span>
+                <span *ngIf="cycle.forceClosed" class="force-closed">⚡ FORCED</span>
+              </h4>
+              <div class="cycle-summary">
+                <span><strong>📅 Period:</strong> {{ cycle.startTime }} {{ cycle.endTime ? 'to ' + cycle.endTime : '(ongoing)' }}</span>
+                <span><strong>📊 Trades:</strong> {{ cycle.tradeCount }}</span>
+                <span><strong>💰 Realized PnL:</strong> {{ cycle.realizedPnl | number:'1.2-2' }}%</span>
+                <span><strong>💸 Unrealized PnL:</strong> {{ cycle.unrealizedPnl | number:'1.2-2' }}%</span>
+                <span><strong>🏆 Total PnL:</strong> {{ cycle.totalPnl | number:'1.2-2' }}%</span>
+              </div>
+            </div>
+
+            <!-- Open Positions for OPEN cycles -->
+            <div *ngIf="cycle.status === 'OPEN'" class="open-positions">
+              <h5>📋 Open Positions</h5>
+              <div *ngIf="cycle.openLongTrade" class="position-card long-position">
+                <div class="position-header">
+                  <span class="position-type">🟢 LONG</span>
+                  <span class="position-size">{{ cycle.openLongTrade.hasAveraging ? '50%' : '25%' }} position</span>
+                </div>
+                <div class="position-details">
+                  <p><strong>Entry:</strong> {{ cycle.openLongTrade.entryPrice | number:'1.6-6' }} at {{ cycle.openLongTrade.entryTime }}</p>
+                  <p *ngIf="cycle.openLongTrade.hasAveraging"><strong>Averaging:</strong> {{ cycle.openLongTrade.averagingPrice | number:'1.6-6' }} at {{ cycle.openLongTrade.averagingTime }}</p>
+                  <p><strong>Current:</strong> {{ cycle.openLongTrade.currentPrice | number:'1.6-6' }} at {{ cycle.openLongTrade.currentTime }}</p>
+                  <p><strong>PnL:</strong> <span [ngClass]="{'profit': (cycle.openLongTrade.unrealizedPnlPercent || 0) > 0, 'loss': (cycle.openLongTrade.unrealizedPnlPercent || 0) < 0}">{{ (cycle.openLongTrade.unrealizedPnlPercent || 0) | number:'1.2-2' }}%</span></p>
+                </div>
+              </div>
+
+              <div *ngIf="cycle.openShortTrade" class="position-card short-position">
+                <div class="position-header">
+                  <span class="position-type">🔴 SHORT</span>
+                  <span class="position-size">{{ cycle.openShortTrade.hasAveraging ? '50%' : '25%' }} position</span>
+                </div>
+                <div class="position-details">
+                  <p><strong>Entry:</strong> {{ cycle.openShortTrade.entryPrice | number:'1.6-6' }} at {{ cycle.openShortTrade.entryTime }}</p>
+                  <p *ngIf="cycle.openShortTrade.hasAveraging"><strong>Averaging:</strong> {{ cycle.openShortTrade.averagingPrice | number:'1.6-6' }} at {{ cycle.openShortTrade.averagingTime }}</p>
+                  <p><strong>Current:</strong> {{ cycle.openShortTrade.currentPrice | number:'1.6-6' }} at {{ cycle.openShortTrade.currentTime }}</p>
+                  <p><strong>PnL:</strong> <span [ngClass]="{'profit': (cycle.openShortTrade.unrealizedPnlPercent || 0) > 0, 'loss': (cycle.openShortTrade.unrealizedPnlPercent || 0) < 0}">{{ (cycle.openShortTrade.unrealizedPnlPercent || 0) | number:'1.2-2' }}%</span></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Closed Trades -->
+            <div class="closed-trades" *ngIf="cycle.allTrades.length > 0">
+              <h5>📋 Closed Trades ({{ cycle.allTrades.length }})</h5>
+              <div class="trades-list">
+                <div *ngFor="let trade of cycle.allTrades" class="trade-card" [ngClass]="{'long-trade': trade.direction === 'LONG', 'short-trade': trade.direction === 'SHORT'}">
+                  <div class="trade-header">
+                    <span class="trade-type">{{ trade.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT' }}</span>
+                    <span class="trade-result" [ngClass]="{'profit': (trade.pnlPercent || 0) > 0, 'loss': (trade.pnlPercent || 0) <= 0}">{{ (trade.pnlPercent || 0) | number:'1.2-2' }}%</span>
+                  </div>
+                  <div class="trade-details">
+                    <p><strong>Entry:</strong> {{ trade.entryPrice | number:'1.6-6' }} at {{ trade.entryTime }}</p>
+                    <p *ngIf="trade.hasAveraging"><strong>Averaging:</strong> {{ trade.averagingPrice | number:'1.6-6' }} at {{ trade.averagingTime }}</p>
+                    <p><strong>Exit:</strong> {{ trade.exitPrice | number:'1.6-6' }} at {{ trade.exitTime }}</p>
+                    <p><strong>Position Size:</strong> {{ (trade.totalPositionSize || 0) * 100 }}% of deposit</p>
+                    <p><strong>Reason:</strong> {{ trade.reason }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `,
   styles: [`
-    .container {
-      padding: 20px;
-      max-width: 1200px;
-      margin: 0 auto;
-    }
+    .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .upload-section { margin-bottom: 20px; }
+    .upload-section input { margin-right: 10px; padding: 8px; }
+    .upload-section button { padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .upload-section button:disabled { background-color: #6c757d; cursor: not-allowed; }
+    .stats { background-color: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+    .strategy-params { background-color: #f8f9fa; padding: 20px; border-radius: 4px; margin-bottom: 20px; }
+    .strategy-params h3 { margin-top: 0; margin-bottom: 15px; color: #333; }
+    .param-row { display: flex; align-items: center; margin-bottom: 10px; }
+    .param-row label { width: 200px; font-weight: 500; }
+    .param-row input { padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; width: 80px; }
+    .recalculate-btn { padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+    .recalculate-btn:hover { background-color: #218838; }
 
-    .upload-section {
-      margin-bottom: 20px;
-    }
+    /* Cycles Analytics Styles */
+    .cycles-container { margin-top: 20px; }
+    .cycles-container h3 { color: #333; margin-bottom: 20px; }
 
-    .upload-section input {
-      margin-right: 10px;
-      padding: 8px;
-    }
+    .session-summary { background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+    .session-summary h4 { margin-top: 0; color: #1976d2; }
+    .session-summary p { margin: 5px 0; }
 
-    .upload-section button {
-      padding: 8px 16px;
-      background-color: #007bff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
+    .cycles-list { display: flex; flex-direction: column; gap: 20px; }
 
-    .upload-section button:disabled {
-      background-color: #6c757d;
-      cursor: not-allowed;
-    }
+    .cycle-card { border: 2px solid #ddd; border-radius: 8px; padding: 15px; background-color: #fff; }
+    .cycle-card.cycle-open { border-color: #28a745; background-color: #f8fff8; }
+    .cycle-card.cycle-closed { border-color: #6c757d; background-color: #f8f9fa; }
 
-    .stats {
-      background-color: #f8f9fa;
-      padding: 15px;
-      border-radius: 4px;
-      margin-bottom: 20px;
-    }
+    .cycle-header h4 { margin: 0 0 10px 0; display: flex; align-items: center; gap: 10px; }
+    .cycle-status { padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+    .cycle-status.open { background-color: #28a745; color: white; }
+    .cycle-status.closed { background-color: #6c757d; color: white; }
+    .force-closed { background-color: #ff6b35; color: white; padding: 2px 6px; border-radius: 10px; font-size: 10px; }
 
-    .table-container {
-      overflow-x: auto;
-      max-height: 600px;
-      overflow-y: auto;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
+    .cycle-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+    .cycle-summary span { font-size: 14px; }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
+    .open-positions { margin-top: 15px; }
+    .open-positions h5 { color: #2e7d32; margin-bottom: 10px; }
 
-    th, td {
-      padding: 8px;
-      text-align: right;
-      border-bottom: 1px solid #ddd;
-      white-space: nowrap;
-    }
+    .position-card { border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+    .long-position { border-left: 4px solid #4caf50; background-color: #f1f8e9; }
+    .short-position { border-left: 4px solid #f44336; background-color: #ffebee; }
 
-    th {
-      background-color: #f8f9fa;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
+    .position-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .position-type { font-weight: bold; }
+    .position-size { font-size: 12px; color: #666; background-color: #e0e0e0; padding: 2px 6px; border-radius: 8px; }
 
-    tr:hover {
-      background-color: #f5f5f5;
-    }
+    .position-details p { margin: 4px 0; font-size: 14px; }
 
-    .strategy-params {
-      background-color: #f8f9fa;
-      padding: 20px;
-      border-radius: 4px;
-      margin-bottom: 20px;
-    }
+    .closed-trades { margin-top: 15px; }
+    .closed-trades h5 { color: #5d4037; margin-bottom: 10px; }
 
-    .strategy-params h3 {
-      margin-top: 0;
-      margin-bottom: 15px;
-      color: #333;
-    }
+    .trades-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
 
-    .param-row {
-      display: flex;
-      align-items: center;
-      margin-bottom: 10px;
-    }
+    .trade-card { border: 1px solid #ddd; border-radius: 6px; padding: 8px; font-size: 13px; }
+    .long-trade { border-left: 3px solid #4caf50; background-color: #f9fff9; }
+    .short-trade { border-left: 3px solid #f44336; background-color: #fffafa; }
 
-    .param-row label {
-      width: 150px;
-      font-weight: 500;
-    }
+    .trade-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .trade-type { font-weight: bold; font-size: 12px; }
+    .trade-result { font-weight: bold; font-size: 14px; }
 
-    .param-row input {
-      padding: 5px 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      width: 80px;
-    }
+    .trade-details p { margin: 2px 0; }
 
-    .recalculate-btn {
-      padding: 8px 16px;
-      background-color: #28a745;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      margin-top: 10px;
-    }
-
-    .recalculate-btn:hover {
-      background-color: #218838;
-    }
+    .profit { color: #2e7d32; }
+    .loss { color: #d32f2f; }
   `]
 })
 export class TechnicalIndicatorsComponent {
   csvData: string = '';
-  candles: CandleData[] = [];
+  candles: CandleWithIndicators[] = [];
+  sessionAnalytics: TradingSessionAnalytics | null = null;
 
   // Параметры стратегии
   rsiPeriod: number = 10;
   rsiOversold: number = 35;
-  rsiOverbought: number = 70;
+  rsiOverbought: number = 65;
   minProfitPercent: number = 0.5;
   averagingThreshold: number = 0.5;
+  cycleProfitThreshold: number = 0.5; // 0.5% порог для принудительного закрытия цикла
+
+  constructor(
+    private marketDataService: MarketDataService,
+    private indicatorsService: IndicatorsService,
+    private longStrategyService: LongStrategyService,
+    private shortStrategyService: ShortStrategyService,
+    private tradingAnalyticsService: TradingAnalyticsService,
+    private combinedStrategyService: CombinedStrategyService,
+    private cycleManagerService: CycleManagerService
+  ) {}
 
   onFileSelected(event: any): void {
     const file = event.target.files[0];
@@ -231,263 +252,100 @@ export class TechnicalIndicatorsComponent {
   processData(): void {
     if (!this.csvData) return;
 
-    // Parse CSV
-    const lines = this.csvData.trim().split('\n');
-    const headers = lines[0].split(',');
+    // 1. Парсим CSV данные
+    const rawCandles = this.marketDataService.parseCSV(this.csvData);
+    this.candles = rawCandles as CandleWithIndicators[];
 
-    const rawCandles: CandleData[] = [];
+    // 2. Считаем индикаторы
+    this.indicatorsService.calculateRSI(this.candles, this.rsiPeriod);
+    this.indicatorsService.calculateEMA(this.candles, 183);
 
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',');
-      const candle: CandleData = {
-        timestamp: parseInt(values[0]),
-        open: parseFloat(values[1]),
-        high: parseFloat(values[2]),
-        low: parseFloat(values[3]),
-        close: parseFloat(values[4]),
-        volume: parseFloat(values[5])
-      };
-
-      // Convert timestamp to UTC+2
-      const date = new Date(candle.timestamp);
-      date.setHours(date.getHours() + 2); // Add 2 hours for UTC+2
-      candle.dateUTC2 = date.toISOString().replace('T', ' ').substring(0, 19);
-
-      rawCandles.push(candle);
-    }
-
-    // Calculate RSI
-    this.calculateRSI(rawCandles, this.rsiPeriod);
-
-    // Calculate EMA
-    this.calculateEMA(rawCandles, 183);
-
-    // Backtester - check entry conditions
-    this.backtestEntryConditions(rawCandles);
-
-    this.candles = rawCandles;
+    // 3. Тестируем стратегии
+    this.testStrategies();
   }
 
-  private calculateRSI(candles: CandleData[], period: number): void {
-    if (candles.length < period + 1) return;
+  private testStrategies(): void {
+    const combinedParams: CombinedStrategyParams = {
+      rsiPeriod: this.rsiPeriod,
+      rsiOversold: this.rsiOversold,
+      rsiOverbought: this.rsiOverbought,
+      minProfitPercent: this.minProfitPercent,
+      averagingThreshold: this.averagingThreshold,
+      cycleProfitThreshold: this.cycleProfitThreshold
+    };
 
-    // Массивы для хранения gains и losses
-    const gains: number[] = [];
-    const losses: number[] = [];
+    // Тестируем объединенную стратегию с управлением циклами
+    const results = this.combinedStrategyService.testCombinedStrategy(this.candles, combinedParams);
 
-    // Вычисляем изменения цен
-    for (let i = 1; i < candles.length; i++) {
-      const change = candles[i].close - candles[i - 1].close;
-      if (change > 0) {
-        gains.push(change);
-        losses.push(0);
-      } else {
-        gains.push(0);
-        losses.push(Math.abs(change));
-      }
-    }
+    // Создаем аналитику сессии на основе циклов
+    const session = this.tradingAnalyticsService.createSessionFromCycles(
+      results.cycles,
+      combinedParams,
+      results.currentOpenLong,
+      results.currentOpenShort
+    );
 
-    let avgGain = 0;
-    let avgLoss = 0;
+    // Сохраняем для отображения в UI
+    this.sessionAnalytics = session;
 
-    // Первые period значений - простое среднее
-    for (let i = 0; i < period; i++) {
-      avgGain += gains[i];
-      avgLoss += losses[i];
-    }
-    avgGain = avgGain / period;
-    avgLoss = avgLoss / period;
-
-    // Устанавливаем первое значение RSI
-    if (avgLoss === 0) {
-      candles[period].rsi = 100;
-    } else {
-      const rs = avgGain / avgLoss;
-      candles[period].rsi = 100 - (100 / (1 + rs));
-    }
-
-    // Последующие значения - сглаженное среднее (Wilder's smoothing)
-    for (let i = period + 1; i < candles.length; i++) {
-      const gainIndex = i - 1; // индекс в массиве gains/losses
-
-      // Wilder's smoothing: новое_среднее = (старое_среднее * (period-1) + новое_значение) / period
-      avgGain = (avgGain * (period - 1) + gains[gainIndex]) / period;
-      avgLoss = (avgLoss * (period - 1) + losses[gainIndex]) / period;
-
-      if (avgLoss === 0) {
-        candles[i].rsi = 100;
-      } else {
-        const rs = avgGain / avgLoss;
-        candles[i].rsi = 100 - (100 / (1 + rs));
-      }
-    }
-
-    // Устанавливаем undefined для первых period свечек
-    for (let i = 0; i < period; i++) {
-      candles[i].rsi = undefined;
-    }
+    // Выводим результаты в консоль
+    this.logCombinedResults(results, session);
   }
 
-  // EMA как на TradingView (начинаем с первой цены)
-  private calculateEMA(candles: CandleData[], period: number): void {
-    const multiplier = 2 / (period + 1);
+  // Метод для вывода результатов с фокусом на циклы
+  private logCombinedResults(results: any, session: any): void {
+    console.log('=== CYCLE-BASED TRADING ANALYTICS ===');
+    console.log(`Total candles analyzed: ${this.candles.length}`);
 
-    for (let i = 0; i < candles.length; i++) {
-      if (i === 0) {
-        candles[i].ema = candles[i].close;
-      } else {
-        candles[i].ema = (candles[i].close * multiplier) + (candles[i - 1].ema! * (1 - multiplier));
-      }
-    }
-  }
+    console.log('\n📊 SESSION OVERVIEW:');
+    console.log(`Session ID: ${session.id}`);
+    console.log(`Period: ${session.startTime} to ${session.endTime}`);
+    console.log(`Strategy Parameters:`, session.strategyParams);
 
-  // Backtester для проверки условий входа в лонг и управления позициями
-  private backtestEntryConditions(candles: CandleData[]): void {
-    const entrySignals = [];
-    const closedTrades = [];
-    let openTrade: any = null;
+    console.log('\n🔄 CYCLE SUMMARY:');
+    console.log(`Total Cycles: ${session.totalCycles}`);
+    console.log(`Closed Cycles: ${session.closedCycles}`);
+    console.log(`Open Cycles: ${session.openCycles}`);
+    console.log(`Forced Closures: ${session.forcedClosures}`);
 
-    for (let i = 2; i < candles.length; i++) { // начинаем с 2, чтобы иметь RSI[2], RSI[1], RSI[0]
-      const current = candles[i];     // текущая свеча (RSI[0])
-      const prev1 = candles[i - 1];   // предыдущая свеча (RSI[1])
-      const prev2 = candles[i - 2];   // свеча до предыдущей (RSI[2])
+    console.log('\n💰 PERFORMANCE METRICS:');
+    console.log(`💰 Total Realized PnL: ${session.totalRealizedPnl.toFixed(2)}% (from deposit)`);
+    console.log(`💸 Total Unrealized PnL: ${session.totalUnrealizedPnl.toFixed(2)}% (from deposit)`);
+    console.log(`🏆 Total PnL: ${session.totalPnl.toFixed(2)}% (from deposit)`);
+    console.log(`📈 Average Cycle PnL: ${session.avgCyclePnl.toFixed(2)}% (closed cycles only)`);
+    console.log(`🎯 Total Trades: ${session.totalTrades}`);
+    console.log(`✅ Win Rate: ${session.winRate.toFixed(2)}%`);
+    console.log(`⚡ Profit Factor: ${session.profitFactor === Infinity ? 'Infinity' : session.profitFactor.toFixed(2)}`);
+    console.log(`📉 Max Drawdown: ${session.maxDrawdown.toFixed(2)}% (from deposit)`);
 
-      // Пропускаем если нет всех необходимых данных
-      if (!current.rsi || !prev1.rsi || !prev2.rsi || !current.ema || !prev1.ema) {
-        continue;
-      }
+    console.log('\n🔄 DETAILED CYCLE BREAKDOWN:');
+    session.cycles.forEach((cycle: any, index: number) => {
+      console.log(`\n--- Cycle ${cycle.cycleId} (${cycle.status}) ---`);
+      console.log(`  📅 Period: ${cycle.startTime} ${cycle.endTime ? `to ${cycle.endTime}` : '(ongoing)'}`);
+      console.log(`  📊 Trades: ${cycle.tradeCount}`);
+      console.log(`  💰 Realized PnL: ${cycle.realizedPnl.toFixed(2)}%`);
+      console.log(`  💸 Unrealized PnL: ${cycle.unrealizedPnl.toFixed(2)}%`);
+      console.log(`  🏆 Total PnL: ${cycle.totalPnl.toFixed(2)}%`);
+      console.log(`  🔒 Force Closed: ${cycle.forceClosed ? 'Yes' : 'No'}`);
 
-      // Проверяем условия закрытия позиции (если позиция открыта)
-      if (openTrade) {
-        const avgPrice = openTrade.hasAveraging ?
-          (openTrade.entryPrice + openTrade.averagingPrice) / 2 :
-          openTrade.entryPrice;
-        const currentPnlPercent = ((current.close - avgPrice) / avgPrice) * 100;
-
-        // Условие закрытия: цена коснулась EMA сверху вниз И профит >= minProfitPercent
-        const priceHitEmaFromAbove = prev1.close > prev1.ema && current.close <= current.ema;
-        const profitCondition = currentPnlPercent >= this.minProfitPercent;
-        const shouldClose = priceHitEmaFromAbove && profitCondition;
-
-        if (shouldClose) {
-          // Закрываем сделку
-          const closedTrade = {
-            ...openTrade,
-            exitTime: current.dateUTC2,
-            exitPrice: current.close,
-            exitEma: current.ema,
-            averagePrice: avgPrice,
-            pnlPercent: currentPnlPercent,
-            reason: 'EMA_TOUCH_WITH_PROFIT'
-          };
-          closedTrades.push(closedTrade);
-          openTrade = null;
-        } else {
-          // Проверяем условия усреднения (если еще не усреднялись)
-          if (!openTrade.hasAveraging) {
-            const priceDropPercent = ((openTrade.entryPrice - current.close) / openTrade.entryPrice) * 100;
-            const priceCrossedEmaUpward = prev1.close <= prev1.ema && current.close > current.ema;
-            const shouldAverage = priceDropPercent >= this.averagingThreshold && priceCrossedEmaUpward;
-
-            if (shouldAverage) {
-              openTrade.hasAveraging = true;
-              openTrade.averagingPrice = current.close;
-              openTrade.averagingTime = current.dateUTC2;
-              openTrade.averagingEma = current.ema;
-            }
-          }
-
-          // Обновляем текущую позицию
-          openTrade.currentPrice = current.close;
-          openTrade.currentTime = current.dateUTC2;
-          openTrade.unrealizedPnlPercent = currentPnlPercent;
+      if (cycle.status === 'OPEN') {
+        console.log(`  📋 Open Positions:`);
+        if (cycle.openLongTrade) {
+          console.log(`    🟢 Long: Entry ${cycle.openLongTrade.entryPrice} | Current ${cycle.openLongTrade.currentPrice} | PnL: ${cycle.openLongTrade.unrealizedPnlPercent?.toFixed(2)}%`);
+        }
+        if (cycle.openShortTrade) {
+          console.log(`    🔴 Short: Entry ${cycle.openShortTrade.entryPrice} | Current ${cycle.openShortTrade.currentPrice} | PnL: ${cycle.openShortTrade.unrealizedPnlPercent?.toFixed(2)}%`);
         }
       }
 
-      // Проверяем условия входа (только если нет открытой позиции)
-      if (!openTrade) {
-        // УСЛОВИЯ ВХОДА В ЛОНГ:
-        // 1. RSI предыдущей свечи < rsiOversold (зона перепроданности)
-        const condition1 = prev1.rsi < this.rsiOversold;
+      console.log(`  📋 Closed Trades:`, cycle.allTrades);
+    });
 
-        // 2. RSI растет: RSI[0] > RSI[1] > RSI[2] (каждая следующая свеча выше предыдущей)
-        const condition2 = (current.rsi > prev1.rsi) && (prev1.rsi > prev2.rsi);
-
-        // 3. Цена ниже EMA: EMA > close * 1.0015 (EMA выше цены на 0.15%+)
-        const condition3 = current.ema > (current.close * 1.0015);
-
-        // Проверяем все условия
-        const canEnter = condition1 && condition2 && condition3;
-
-        const signal = {
-          canEnterLong: canEnter,
-          timestamp: current.timestamp,
-          dateTime: current.dateUTC2,
-          close: current.close,
-          ema: current.ema,
-          rsi_current: current.rsi,
-          rsi_prev1: prev1.rsi,
-          rsi_prev2: prev2.rsi,
-          condition1_rsi_oversold: condition1,
-          condition2_rsi_growing: condition2,
-          condition3_price_below_ema: condition3,
-          hasOpenTrade: false
-        };
-
-        entrySignals.push(signal);
-
-        // Если условия выполнены, открываем позицию
-        if (canEnter) {
-          openTrade = {
-            entryTime: current.dateUTC2,
-            entryPrice: current.close,
-            entryEma: current.ema,
-            entryRsi: current.rsi,
-            hasAveraging: false,
-            averagingPrice: null,
-            averagingTime: null,
-            averagingEma: null,
-            currentPrice: current.close,
-            currentTime: current.dateUTC2,
-            unrealizedPnlPercent: 0
-          };
-        }
-      } else {
-        // Есть открытая позиция, просто записываем что сделка активна
-        const signal = {
-          canEnterLong: false,
-          timestamp: current.timestamp,
-          dateTime: current.dateUTC2,
-          close: current.close,
-          ema: current.ema,
-          rsi_current: current.rsi,
-          rsi_prev1: prev1.rsi,
-          rsi_prev2: prev2.rsi,
-          condition1_rsi_oversold: false,
-          condition2_rsi_growing: false,
-          condition3_price_below_ema: false,
-          hasOpenTrade: true
-        };
-        entrySignals.push(signal);
-      }
-    }
-
-    // Выводим в консоль все результаты
-    console.log('=== BACKTEST RESULTS ===');
-    console.log(`Total candles analyzed: ${entrySignals.length}`);
-    console.log(`Entry signals found: ${entrySignals.filter(s => s.canEnterLong).length}`);
-    console.log(`Closed trades: ${closedTrades.length}`);
-    console.log('--- ENTRY SIGNALS ---');
-    console.log(entrySignals.filter(s => s.canEnterLong));
-    console.log('--- CLOSED TRADES ---');
-    console.log(closedTrades);
-    console.log('--- OPEN TRADE ---');
-    console.log(openTrade);
-    console.log('--- ALL SIGNALS ---');
-    console.log(entrySignals);
+    console.log('\n📈 ALL TRADING SESSIONS:');
+    console.log(this.tradingAnalyticsService.getAllSessions());
   }
 
-  trackByTimestamp(index: number, candle: CandleData): number {
+  trackByTimestamp(index: number, candle: CandleWithIndicators): number {
     return candle.timestamp;
   }
 }
