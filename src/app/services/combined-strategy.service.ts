@@ -14,6 +14,9 @@ export interface CombinedStrategyParams {
 
   // НОВЫЕ: Настройки условий разворота RSI
   rsiReversalMode: 'strict' | 'relaxed' | 'zone_only'; // strict: RSI > RSI[1] > RSI[2], relaxed: RSI > RSI[1], zone_only: только зона
+
+  // НОВОЕ: Расстояние до EMA для фильтра входа
+  emaDistancePercent: number; // 0.15% по умолчанию
 }
 
 export interface CombinedStrategyResults {
@@ -386,7 +389,7 @@ export class CombinedStrategyService {
           params.rsiOversold,
           params.rsiOverbought
         );
-        const condition2 = current.ema > (current.close * 1.0015);
+        const condition2 = current.ema > (current.close * (1 + params.emaDistancePercent / 100));
 
         if (condition1 && condition2) {
           openLongTrade = {
@@ -433,7 +436,7 @@ export class CombinedStrategyService {
           params.rsiOversold,
           params.rsiOverbought
         );
-        const condition2 = current.ema < (current.close * 0.9985);
+        const condition2 = current.ema < (current.close * (1 - params.emaDistancePercent / 100));
 
         if (condition1 && condition2) {
           openShortTrade = {

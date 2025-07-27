@@ -56,6 +56,10 @@ import { CycleManagerService } from './services/cycle-manager.service';
             <option value="zone_only">Zone Only (RSI in zone)</option>
           </select>
         </div>
+        <div class="param-row">
+          <label for="emaDistance">EMA Distance %:</label>
+          <input type="number" id="emaDistance" [(ngModel)]="emaDistancePercent" min="0.01" max="1.0" step="0.01" />
+        </div>
         <button (click)="processData()" class="recalculate-btn">Recalculate with New Parameters</button>
       </div>
 
@@ -64,7 +68,7 @@ import { CycleManagerService } from './services/cycle-manager.service';
         <p>RSI Period: {{ rsiPeriod }}</p>
         <p>RSI Oversold: {{ rsiOversold }} | RSI Overbought: {{ rsiOverbought }}</p>
         <p>RSI Reversal Mode: {{ getRsiModeDescription(rsiReversalMode) }}</p>
-        <p>Min Profit: {{ minProfitPercent }}% | Averaging Threshold: {{ averagingThreshold }}%</p>
+        <p>EMA Distance: {{ emaDistancePercent }}% | Min Profit: {{ minProfitPercent }}% | Averaging Threshold: {{ averagingThreshold }}%</p>
         <p>Cycle Profit Threshold: {{ cycleProfitThreshold }}%</p>
         <p>EMA Period: 183</p>
       </div>
@@ -285,6 +289,7 @@ export class TechnicalIndicatorsComponent {
   averagingThreshold: number = 0.5;
   cycleProfitThreshold: number = 0.5; // 0.5% порог для принудительного закрытия цикла
   rsiReversalMode: 'strict' | 'relaxed' | 'zone_only' = 'strict'; // НОВОЕ: режим разворота RSI
+  emaDistancePercent: number = 0.15; // НОВОЕ: расстояние до EMA в процентах
 
   constructor(
     private marketDataService: MarketDataService,
@@ -330,7 +335,8 @@ export class TechnicalIndicatorsComponent {
       minProfitPercent: this.minProfitPercent,
       averagingThreshold: this.averagingThreshold,
       cycleProfitThreshold: this.cycleProfitThreshold,
-      rsiReversalMode: this.rsiReversalMode // НОВОЕ: передаем режим разворота
+      rsiReversalMode: this.rsiReversalMode, // НОВОЕ: передаем режим разворота
+      emaDistancePercent: this.emaDistancePercent // НОВОЕ: передаем расстояние до EMA
     };
 
     // Тестируем объединенную стратегию с управлением циклами
