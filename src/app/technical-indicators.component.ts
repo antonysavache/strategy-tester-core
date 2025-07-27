@@ -270,6 +270,7 @@ import { CycleManagerService } from './services/cycle-manager.service';
 
     .log-table .log-entry { background-color: #e8f5e8; }
     .log-table .log-exit { background-color: #fff3e0; }
+    .log-table .log-closed { background-color: #e8f5e8; }
     .log-table .log-averaging { background-color: #e3f2fd; }
     .log-table .log-force-close { background-color: #ffebee; }
     .log-table .log-cycle-start { background-color: #f3e5f5; }
@@ -431,8 +432,8 @@ export class TechnicalIndicatorsComponent {
       'SHORT_ENTRY': '📉',
       'LONG_AVERAGING': '🔄',
       'SHORT_AVERAGING': '🔄',
-      'LONG_CLOSED': '✅',
-      'SHORT_CLOSED': '✅',
+      'LONG_CLOSED': '💰',
+      'SHORT_CLOSED': '💰',
       'FORCE_CLOSE': '🚨',
       'CYCLE_END': '🏁'
     };
@@ -443,8 +444,8 @@ export class TechnicalIndicatorsComponent {
     const classes: { [key: string]: string } = {
       'LONG_ENTRY': 'log-entry',
       'SHORT_ENTRY': 'log-entry',
-      'LONG_CLOSED': 'log-exit',
-      'SHORT_CLOSED': 'log-exit',
+      'LONG_CLOSED': 'log-closed',
+      'SHORT_CLOSED': 'log-closed',
       'LONG_AVERAGING': 'log-averaging',
       'SHORT_AVERAGING': 'log-averaging',
       'FORCE_CLOSE': 'log-force-close',

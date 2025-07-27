@@ -236,6 +236,17 @@ export class CombinedStrategyService {
           allClosedTrades.push(openLongTrade);
           this.cycleManager.addClosedTradeToCurrentCycle(openLongTrade);
 
+          // Логируем закрытие сделки с PnL и обновленным циклом
+          this.cycleManager.logCycleEvent(
+            'LONG_CLOSED',
+            `Exit: ${current.close.toFixed(6)} | PnL: +${currentPnlPercent.toFixed(2)}%`,
+            current,
+            current.close,
+            currentPnlPercent,
+            null, // LONG закрыт, поэтому null
+            openShortTrade
+          );
+
           console.log(`📈 CYCLE ${this.cycleManager.getCurrentCycleStats().cycleNumber} - LONG CLOSED at ${current.dateUTC2}:`);
           console.log(`  Entry: ${openLongTrade.entryPrice} → Exit: ${current.close} | PnL: +${currentPnlPercent.toFixed(2)}%`);
 
@@ -323,6 +334,17 @@ export class CombinedStrategyService {
           shortClosedTrades.push(openShortTrade);
           allClosedTrades.push(openShortTrade);
           this.cycleManager.addClosedTradeToCurrentCycle(openShortTrade);
+
+          // Логируем закрытие сделки с PnL и обновленным циклом
+          this.cycleManager.logCycleEvent(
+            'SHORT_CLOSED',
+            `Exit: ${current.close.toFixed(6)} | PnL: +${currentPnlPercent.toFixed(2)}%`,
+            current,
+            current.close,
+            currentPnlPercent,
+            openLongTrade,
+            null // SHORT закрыт, поэтому null
+          );
 
           console.log(`📉 CYCLE ${this.cycleManager.getCurrentCycleStats().cycleNumber} - SHORT CLOSED at ${current.dateUTC2}:`);
           console.log(`  Entry: ${openShortTrade.entryPrice} → Exit: ${current.close} | PnL: +${currentPnlPercent.toFixed(2)}%`);

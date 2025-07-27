@@ -78,8 +78,13 @@ export class CycleManagerService {
   addClosedTradeToCurrentCycle(trade: Trade | ShortTrade): void {
     const currentCycle = this.getCurrentCycle();
 
-    // ИСПРАВЛЯЕМ: НЕ добавляем к realizedPnl, а только помечаем сделку как закрытую
-    // realizedPnl будет пересчитан из всех закрытых сделок в checkCyclePnl
+    // ИСПРАВЛЯЕМ: Пересчитываем realizedPnl из всех закрытых сделок
+    const closedTrades = [
+      ...currentCycle.longTrades.filter(t => t.exitTime), // Только закрытые
+      ...currentCycle.shortTrades.filter(t => t.exitTime)  // Только закрытые
+    ];
+
+    currentCycle.realizedPnl = closedTrades.reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
   }
 
   checkCyclePnl(
@@ -168,6 +173,17 @@ export class CycleManagerService {
       if (existingLongIndex !== -1) {
         // Обновляем существующую ОТКРЫТУЮ сделку
         currentCycle.longTrades[existingLongIndex] = closedLong;
+
+        // Логируем принудительное закрытие LONG
+        this.logCycleEvent(
+          'FORCE_CLOSE',
+          `LONG closed: ${openLongTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | PnL: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
+          currentCandle,
+          currentCandle.close,
+          pnlPercent,
+          null, // LONG закрыт
+          openShortTrade
+        );
       } else {
         console.error('❌ FORCE CLOSE: Could not find open LONG trade to close!', {
           searchFor: { entryTime: openLongTrade.entryTime, entryPrice: openLongTrade.entryPrice },
@@ -205,6 +221,17 @@ export class CycleManagerService {
       if (existingShortIndex !== -1) {
         // Обновляем существующую ОТКРЫТУЮ сделку
         currentCycle.shortTrades[existingShortIndex] = closedShort;
+
+        // Логируем принудительное закрытие SHORT
+        this.logCycleEvent(
+          'FORCE_CLOSE',
+          `SHORT closed: ${openShortTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | PnL: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
+          currentCandle,
+          currentCandle.close,
+          pnlPercent,
+          openLongTrade,
+          null // SHORT закрыт
+        );
       } else {
         console.error('❌ FORCE CLOSE: Could not find open SHORT trade to close!', {
           searchFor: { entryTime: openShortTrade.entryTime, entryPrice: openShortTrade.entryPrice },
@@ -306,6 +333,15 @@ export class CycleManagerService {
   ): void {
     const currentCycle = this.getCurrentCycle();
 
+    // Если это закрытие сделки, нужно обновить realizedPnL ПЕРЕД логированием
+    if (action === 'LONG_CLOSED' || action === 'SHORT_CLOSED') {
+      const closedTrades = [
+        ...currentCycle.longTrades.filter(t => t.exitTime), // Только закрытые
+        ...currentCycle.shortTrades.filter(t => t.exitTime)  // Только закрытые
+      ];
+      currentCycle.realizedPnl = closedTrades.reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
+    }
+
     // Формируем строку открытых позиций
     let openPositions = '';
     if (openLongTrade && openShortTrade) {
@@ -324,7 +360,7 @@ export class CycleManagerService {
       details,
       price,
       pnl,
-      cycleRealizedPnl: currentCycle.realizedPnl,
+      cycleRealizedPnl: currentCycle.realizedPnl, // Теперь это будет обновленное значение
       openPositions
     };
 
