@@ -11,6 +11,9 @@ export interface CombinedStrategyParams {
   minProfitPercent: number;
   averagingThreshold: number;
   cycleProfitThreshold: number; // 0.5% по умолчанию
+
+  // НОВЫЕ: Настройки условий разворота RSI
+  rsiReversalMode: 'strict' | 'relaxed' | 'zone_only'; // strict: RSI > RSI[1] > RSI[2], relaxed: RSI > RSI[1], zone_only: только зона
 }
 
 export interface CombinedStrategyResults {
@@ -42,6 +45,54 @@ export class CombinedStrategyService {
     private shortStrategy: ShortStrategyService,
     private cycleManager: CycleManagerService
   ) {}
+
+  // НОВАЯ: Вспомогательная функция для проверки условий разворота RSI
+  private checkRsiReversalCondition(
+    mode: 'strict' | 'relaxed' | 'zone_only',
+    direction: 'LONG' | 'SHORT',
+    currentRsi: number,
+    prevRsi1: number,
+    prevRsi2: number,
+    oversoldLevel: number,
+    overboughtLevel: number
+  ): boolean {
+
+    if (direction === 'LONG') {
+      // Проверяем зону перепроданности
+      const inOversoldZone = prevRsi1 < oversoldLevel;
+
+      switch (mode) {
+        case 'strict':
+          // Строгий: RSI растет 2 периода подряд
+          return inOversoldZone && (currentRsi > prevRsi1) && (prevRsi1 > prevRsi2);
+
+        case 'relaxed':
+          // Мягкий: RSI растет 1 период
+          return inOversoldZone && (currentRsi > prevRsi1);
+
+        case 'zone_only':
+          // Только зона: RSI просто в зоне перепроданности
+          return inOversoldZone;
+      }
+    } else { // SHORT
+      // Проверяем зону перекупленности
+      const inOverboughtZone = prevRsi1 > overboughtLevel;
+
+      switch (mode) {
+        case 'strict':
+          // Строгий: RSI падает 2 периода подряд
+          return inOverboughtZone && (currentRsi < prevRsi1) && (prevRsi1 < prevRsi2);
+
+        case 'relaxed':
+          // Мягкий: RSI падает 1 период
+          return inOverboughtZone && (currentRsi < prevRsi1);
+
+        case 'zone_only':
+          // Только зона: RSI просто в зоне перекупленности
+          return inOverboughtZone;
+      }
+    }
+  }
 
   testCombinedStrategy(
     candles: CandleWithIndicators[],
@@ -113,14 +164,8 @@ export class CombinedStrategyService {
 
       if (cyclePnlCheck.shouldForceClose) {
         // ОТЛАДКА: Детальная информация о принудительном закрытии
-        this.cycleManager.logCycleEvent(
-          'FORCE_CLOSE',
-          `Realized: ${cyclePnlCheck.currentCycleRealizedPnl.toFixed(2)}% + Unrealized: ${cyclePnlCheck.currentUnrealizedPnl.toFixed(2)}% = ${cyclePnlCheck.totalCurrentPnl.toFixed(2)}%`,
-          current.close,
-          cyclePnlCheck.totalCurrentPnl,
-          openLongTrade,
-          openShortTrade
-        );
+        console.log(`🚨 FORCE CLOSING CYCLE at ${current.dateUTC2}`);
+        console.log(`  Current cycle: ${cyclePnlCheck.currentCycleRealizedPnl.toFixed(2)}% realized + ${cyclePnlCheck.currentUnrealizedPnl.toFixed(2)}% unrealized = ${cyclePnlCheck.totalCurrentPnl.toFixed(2)}%`);
 
         // Принудительно закрываем все позиции и завершаем цикл
         const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
@@ -132,32 +177,20 @@ export class CombinedStrategyService {
 
         console.log(`  Positions after closing:`);
         if (closedLong) {
-          this.cycleManager.logCycleEvent(
-            'LONG_CLOSED',
-            `Forced close: ${openLongTrade!.entryPrice} → ${current.close}`,
-            current.close,
-            closedLong.pnlPercent!,
-            null,
-            openShortTrade
-          );
+          console.log(`    Closed LONG: ${closedLong.pnlPercent?.toFixed(2)}%`);
           longClosedTrades.push(closedLong);
           allClosedTrades.push(closedLong);
-          openLongTrade = null;
         }
 
         if (closedShort) {
-          this.cycleManager.logCycleEvent(
-            'SHORT_CLOSED',
-            `Forced close: ${openShortTrade!.entryPrice} → ${current.close}`,
-            current.close,
-            closedShort.pnlPercent!,
-            openLongTrade,
-            null
-          );
+          console.log(`    Closed SHORT: ${closedShort.pnlPercent?.toFixed(2)}%`);
           shortClosedTrades.push(closedShort);
           allClosedTrades.push(closedShort);
-          openShortTrade = null;
         }
+
+        // ИСПРАВЛЯЕМ: обнуляем переменные после принудительного закрытия
+        openLongTrade = null;
+        openShortTrade = null;
 
         forcedClosures++;
 
@@ -344,11 +377,18 @@ export class CombinedStrategyService {
 
       // Логика входа в лонг (только если нет открытой лонг позиции)
       if (!openLongTrade) {
-        const condition1 = prev1.rsi < params.rsiOversold;
-        const condition2 = (current.rsi > prev1.rsi) && (prev1.rsi > prev2.rsi);
-        const condition3 = current.ema > (current.close * 1.0015);
+        const condition1 = this.checkRsiReversalCondition(
+          params.rsiReversalMode,
+          'LONG',
+          current.rsi,
+          prev1.rsi,
+          prev2.rsi,
+          params.rsiOversold,
+          params.rsiOverbought
+        );
+        const condition2 = current.ema > (current.close * 1.0015);
 
-        if (condition1 && condition2 && condition3) {
+        if (condition1 && condition2) {
           openLongTrade = {
             direction: 'LONG',
             entryTime: current.dateUTC2!,
@@ -384,11 +424,18 @@ export class CombinedStrategyService {
 
       // Логика входа в шорт (только если нет открытой шорт позиции)
       if (!openShortTrade) {
-        const condition1 = prev1.rsi > params.rsiOverbought;
-        const condition2 = (current.rsi < prev1.rsi) && (prev1.rsi < prev2.rsi);
-        const condition3 = current.ema < (current.close * 0.9985);
+        const condition1 = this.checkRsiReversalCondition(
+          params.rsiReversalMode,
+          'SHORT',
+          current.rsi,
+          prev1.rsi,
+          prev2.rsi,
+          params.rsiOversold,
+          params.rsiOverbought
+        );
+        const condition2 = current.ema < (current.close * 0.9985);
 
-        if (condition1 && condition2 && condition3) {
+        if (condition1 && condition2) {
           openShortTrade = {
             direction: 'SHORT',
             entryTime: current.dateUTC2!,

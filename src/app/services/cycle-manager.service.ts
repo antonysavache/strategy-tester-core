@@ -119,18 +119,6 @@ export class CycleManagerService {
     // 3) 1 сделка открыта в плюс, реализованный + нереализованный > 0.5%
     const shouldForceClose = totalCurrentPnl > this.profitThresholdPercent;
 
-    // ОТЛАДКА: логируем принудительные закрытия
-    if (shouldForceClose) {
-      this.logCycleEvent(
-        'FORCE_CLOSE',
-        `Total PnL: ${totalCurrentPnl.toFixed(3)}% > ${this.profitThresholdPercent}%`,
-        currentCandle.close,
-        totalCurrentPnl,
-        openLongTrade,
-        openShortTrade
-      );
-    }
-
     return {
       currentCycleRealizedPnl: currentCycle.realizedPnl,
       currentUnrealizedPnl,

@@ -48,6 +48,14 @@ import { CycleManagerService } from './services/cycle-manager.service';
           <label for="cycleThreshold">Cycle Profit Threshold %:</label>
           <input type="number" id="cycleThreshold" [(ngModel)]="cycleProfitThreshold" min="0.1" max="2.0" step="0.1" />
         </div>
+        <div class="param-row">
+          <label for="rsiReversalMode">RSI Reversal Mode:</label>
+          <select id="rsiReversalMode" [(ngModel)]="rsiReversalMode">
+            <option value="strict">Strict (RSI > RSI[1] > RSI[2])</option>
+            <option value="relaxed">Relaxed (RSI > RSI[1])</option>
+            <option value="zone_only">Zone Only (RSI in zone)</option>
+          </select>
+        </div>
         <button (click)="processData()" class="recalculate-btn">Recalculate with New Parameters</button>
       </div>
 
@@ -55,6 +63,7 @@ import { CycleManagerService } from './services/cycle-manager.service';
         <p>Total candles: {{ candles.length }}</p>
         <p>RSI Period: {{ rsiPeriod }}</p>
         <p>RSI Oversold: {{ rsiOversold }} | RSI Overbought: {{ rsiOverbought }}</p>
+        <p>RSI Reversal Mode: {{ getRsiModeDescription(rsiReversalMode) }}</p>
         <p>Min Profit: {{ minProfitPercent }}% | Averaging Threshold: {{ averagingThreshold }}%</p>
         <p>Cycle Profit Threshold: {{ cycleProfitThreshold }}%</p>
         <p>EMA Period: 183</p>
@@ -188,6 +197,7 @@ import { CycleManagerService } from './services/cycle-manager.service';
     .param-row { display: flex; align-items: center; margin-bottom: 10px; }
     .param-row label { width: 200px; font-weight: 500; }
     .param-row input { padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; width: 80px; }
+    .param-row select { padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; width: 250px; }
     .recalculate-btn { padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
     .recalculate-btn:hover { background-color: #218838; }
 
@@ -274,6 +284,7 @@ export class TechnicalIndicatorsComponent {
   minProfitPercent: number = 0.5;
   averagingThreshold: number = 0.5;
   cycleProfitThreshold: number = 0.5; // 0.5% порог для принудительного закрытия цикла
+  rsiReversalMode: 'strict' | 'relaxed' | 'zone_only' = 'strict'; // НОВОЕ: режим разворота RSI
 
   constructor(
     private marketDataService: MarketDataService,
@@ -318,7 +329,8 @@ export class TechnicalIndicatorsComponent {
       rsiOverbought: this.rsiOverbought,
       minProfitPercent: this.minProfitPercent,
       averagingThreshold: this.averagingThreshold,
-      cycleProfitThreshold: this.cycleProfitThreshold
+      cycleProfitThreshold: this.cycleProfitThreshold,
+      rsiReversalMode: this.rsiReversalMode // НОВОЕ: передаем режим разворота
     };
 
     // Тестируем объединенную стратегию с управлением циклами
@@ -434,5 +446,15 @@ export class TechnicalIndicatorsComponent {
       'CYCLE_END': 'log-cycle-end'
     };
     return classes[action] || '';
+  }
+
+  // НОВЫЙ: Описание режима разворота RSI
+  getRsiModeDescription(mode: 'strict' | 'relaxed' | 'zone_only'): string {
+    const descriptions = {
+      'strict': 'Strict (RSI > RSI[1] > RSI[2])',
+      'relaxed': 'Relaxed (RSI > RSI[1])',
+      'zone_only': 'Zone Only (RSI in zone)'
+    };
+    return descriptions[mode];
   }
 }
