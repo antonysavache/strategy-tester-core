@@ -27,6 +27,20 @@ export interface Trade {
   currentPrice?: number;
   currentTime?: string;
   unrealizedPnlPercent?: number;
+
+  // НОВЫЕ ПОЛЯ: Контекст других позиций
+  openShortOnEntry?: {
+    entryPrice: number;
+    entryTime: string;
+    hasAveraging: boolean;
+    unrealizedPnl?: number;
+  };
+  openShortOnExit?: {
+    entryPrice: number;
+    entryTime: string;
+    hasAveraging: boolean;
+    unrealizedPnl?: number;
+  };
 }
 
 export interface EntrySignal {

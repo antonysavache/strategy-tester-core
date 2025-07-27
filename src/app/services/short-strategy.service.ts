@@ -27,6 +27,20 @@ export interface ShortTrade {
   currentPrice?: number;
   currentTime?: string;
   unrealizedPnlPercent?: number;
+
+  // НОВЫЕ ПОЛЯ: Контекст других позиций
+  openLongOnEntry?: {
+    entryPrice: number;
+    entryTime: string;
+    hasAveraging: boolean;
+    unrealizedPnl?: number;
+  };
+  openLongOnExit?: {
+    entryPrice: number;
+    entryTime: string;
+    hasAveraging: boolean;
+    unrealizedPnl?: number;
+  };
 }
 
 export interface ShortEntrySignal {

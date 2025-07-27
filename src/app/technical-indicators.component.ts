@@ -121,6 +121,37 @@ import { CycleManagerService } from './services/cycle-manager.service';
               </div>
             </div>
 
+            <!-- Cycle Event Log -->
+            <div class="cycle-log" *ngIf="cycle.logs && cycle.logs.length > 0">
+              <h5>📋 Cycle Event Log</h5>
+              <table class="log-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Details</th>
+                    <th>Price</th>
+                    <th>PnL</th>
+                    <th>Realized</th>
+                    <th>Open Positions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let log of cycle.logs" [ngClass]="getLogRowClass(log.action)">
+                    <td>{{ formatTime(log.timestamp) }}</td>
+                    <td>{{ getActionIcon(log.action) }} {{ log.action.replace('_', ' ') }}</td>
+                    <td>{{ log.details }}</td>
+                    <td>{{ log.price ? (log.price | number:'1.6-6') : '-' }}</td>
+                    <td [ngClass]="{'profit': (log.pnl || 0) > 0, 'loss': (log.pnl || 0) < 0}">
+                      {{ log.pnl ? ((log.pnl | number:'1.2-2') + '%') : '-' }}
+                    </td>
+                    <td>{{ log.cycleRealizedPnl ? ((log.cycleRealizedPnl | number:'1.2-2') + '%') : '-' }}</td>
+                    <td>{{ log.openPositions || '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
             <!-- Closed Trades -->
             <div class="closed-trades" *ngIf="cycle.allTrades.length > 0">
               <h5>📋 Closed Trades ({{ cycle.allTrades.length }})</h5>
@@ -213,6 +244,22 @@ import { CycleManagerService } from './services/cycle-manager.service';
 
     .profit { color: #2e7d32; }
     .loss { color: #d32f2f; }
+
+    /* Cycle Log Styles */
+    .cycle-log { margin-top: 15px; }
+    .cycle-log h5 { color: #424242; margin-bottom: 10px; }
+
+    .log-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px; }
+    .log-table th, .log-table td { padding: 6px 8px; border: 1px solid #ddd; text-align: left; }
+    .log-table th { background-color: #f5f5f5; font-weight: bold; color: #333; }
+    .log-table tbody tr:nth-child(even) { background-color: #fafafa; }
+
+    .log-table .log-entry { background-color: #e8f5e8; }
+    .log-table .log-exit { background-color: #fff3e0; }
+    .log-table .log-averaging { background-color: #e3f2fd; }
+    .log-table .log-force-close { background-color: #ffebee; }
+    .log-table .log-cycle-start { background-color: #f3e5f5; }
+    .log-table .log-cycle-end { background-color: #e0f2f1; }
   `]
 })
 export class TechnicalIndicatorsComponent {
@@ -347,5 +394,45 @@ export class TechnicalIndicatorsComponent {
 
   trackByTimestamp(index: number, candle: CandleWithIndicators): number {
     return candle.timestamp;
+  }
+
+  // Методы для обработки логов цикла
+  formatTime(timestamp: string): string {
+    return new Date(timestamp).toLocaleString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  getActionIcon(action: string): string {
+    const icons: { [key: string]: string } = {
+      'CYCLE_START': '🚀',
+      'LONG_ENTRY': '📈',
+      'SHORT_ENTRY': '📉',
+      'LONG_AVERAGING': '🔄',
+      'SHORT_AVERAGING': '🔄',
+      'LONG_CLOSED': '✅',
+      'SHORT_CLOSED': '✅',
+      'FORCE_CLOSE': '🚨',
+      'CYCLE_END': '🏁'
+    };
+    return icons[action] || '📋';
+  }
+
+  getLogRowClass(action: string): string {
+    const classes: { [key: string]: string } = {
+      'LONG_ENTRY': 'log-entry',
+      'SHORT_ENTRY': 'log-entry',
+      'LONG_CLOSED': 'log-exit',
+      'SHORT_CLOSED': 'log-exit',
+      'LONG_AVERAGING': 'log-averaging',
+      'SHORT_AVERAGING': 'log-averaging',
+      'FORCE_CLOSE': 'log-force-close',
+      'CYCLE_START': 'log-cycle-start',
+      'CYCLE_END': 'log-cycle-end'
+    };
+    return classes[action] || '';
   }
 }

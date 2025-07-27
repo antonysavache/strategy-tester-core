@@ -3,6 +3,16 @@ import { Trade } from './long-strategy.service';
 import { ShortTrade } from './short-strategy.service';
 import { CandleWithIndicators } from './indicators.service';
 
+export interface TradingCycleLog {
+  timestamp: string;
+  action: 'CYCLE_START' | 'LONG_ENTRY' | 'SHORT_ENTRY' | 'LONG_AVERAGING' | 'SHORT_AVERAGING' | 'LONG_CLOSED' | 'SHORT_CLOSED' | 'FORCE_CLOSE' | 'CYCLE_END';
+  details: string;
+  price?: number;
+  pnl?: number;
+  cycleRealizedPnl?: number;
+  openPositions?: string;
+}
+
 export interface TradingCycle {
   id: number;
   startTime: string;
@@ -14,6 +24,7 @@ export interface TradingCycle {
   isActive: boolean;
   forceClosed: boolean; // Закрыт принудительно по достижению 0.5%
   finalPnl?: number;
+  logs: TradingCycleLog[]; // НОВОЕ: логи событий цикла
 }
 
 export interface CyclePnlCheck {
@@ -45,7 +56,8 @@ export class CycleManagerService {
         realizedPnl: 0,
         unrealizedPnl: 0,
         isActive: true,
-        forceClosed: false
+        forceClosed: false,
+        logs: [] // НОВОЕ: инициализируем пустой массив логов
       };
       this.cycles.push(activeCycle);
     }
@@ -66,8 +78,8 @@ export class CycleManagerService {
   addClosedTradeToCurrentCycle(trade: Trade | ShortTrade): void {
     const currentCycle = this.getCurrentCycle();
 
-    // Добавляем PnL закрытой сделки к реализованной прибыли цикла
-    currentCycle.realizedPnl += (trade.pnlPercent || 0);
+    // ИСПРАВЛЯЕМ: НЕ добавляем к realizedPnl, а только помечаем сделку как закрытую
+    // realizedPnl будет пересчитан из всех закрытых сделок в checkCyclePnl
   }
 
   checkCyclePnl(
@@ -77,7 +89,15 @@ export class CycleManagerService {
   ): CyclePnlCheck {
     const currentCycle = this.getCurrentCycle();
 
-    // Рассчитываем текущую нереализованную прибыль
+    // ИСПРАВЛЯЕМ: ВСЕГДА пересчитываем realizedPnl из всех закрытых сделок
+    const closedTrades = [
+      ...currentCycle.longTrades.filter(t => t.exitTime), // Только закрытые
+      ...currentCycle.shortTrades.filter(t => t.exitTime)  // Только закрытые
+    ];
+
+    currentCycle.realizedPnl = closedTrades.reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
+
+    // Рассчитываем текущую нереализованную прибыль от открытых позиций
     let currentUnrealizedPnl = 0;
     if (openLongTrade?.unrealizedPnlPercent) {
       currentUnrealizedPnl += openLongTrade.unrealizedPnlPercent;
@@ -86,14 +106,30 @@ export class CycleManagerService {
       currentUnrealizedPnl += openShortTrade.unrealizedPnlPercent;
     }
 
-    // ИСПРАВЛЯЕМ: обновляем нереализованный PnL в активном цикле
+    // Обновляем нереализованный PnL в цикле
     currentCycle.unrealizedPnl = currentUnrealizedPnl;
 
-    // Общий PnL цикла = реализованная прибыль + нереализованная прибыль
+    // Общий PnL цикла = реализованный (из закрытых сделок) + нереализованный (от открытых)
     const totalCurrentPnl = currentCycle.realizedPnl + currentUnrealizedPnl;
 
-    // Проверяем, нужно ли принудительно закрывать позиции
+    // ИСПРАВЛЯЕМ: ПРАВИЛЬНАЯ логика принудительного закрытия цикла
+    // Цикл закрывается ТОЛЬКО когда общий PnL > Cycle Profit Threshold (0.5%)
+    // 1) Все сделки закрыты в плюс и реализованный PnL > 0.5%
+    // 2) 1 сделка открыта в минус, реализованный PnL по закрытым больше текущего минуса на 0.5%
+    // 3) 1 сделка открыта в плюс, реализованный + нереализованный > 0.5%
     const shouldForceClose = totalCurrentPnl > this.profitThresholdPercent;
+
+    // ОТЛАДКА: логируем принудительные закрытия
+    if (shouldForceClose) {
+      this.logCycleEvent(
+        'FORCE_CLOSE',
+        `Total PnL: ${totalCurrentPnl.toFixed(3)}% > ${this.profitThresholdPercent}%`,
+        currentCandle.close,
+        totalCurrentPnl,
+        openLongTrade,
+        openShortTrade
+      );
+    }
 
     return {
       currentCycleRealizedPnl: currentCycle.realizedPnl,
@@ -134,21 +170,22 @@ export class CycleManagerService {
         reason: reason
       };
 
-      // ИСПРАВЛЯЕМ: Добавляем закрытую сделку в массив сделок цикла
-      // Находим и обновляем существующую сделку или добавляем новую
+      // ИСПРАВЛЯЕМ: Ищем открытую сделку и обновляем её, НЕ добавляем дубликат
       const existingLongIndex = currentCycle.longTrades.findIndex(t =>
-        t.entryTime === openLongTrade.entryTime && t.entryPrice === openLongTrade.entryPrice
+        t.entryTime === openLongTrade.entryTime &&
+        t.entryPrice === openLongTrade.entryPrice &&
+        !t.exitTime // Только открытые сделки
       );
 
       if (existingLongIndex !== -1) {
-        // Обновляем существующую сделку
+        // Обновляем существующую ОТКРЫТУЮ сделку
         currentCycle.longTrades[existingLongIndex] = closedLong;
       } else {
-        // Добавляем новую закрытую сделку
-        currentCycle.longTrades.push(closedLong);
+        console.error('❌ FORCE CLOSE: Could not find open LONG trade to close!', {
+          searchFor: { entryTime: openLongTrade.entryTime, entryPrice: openLongTrade.entryPrice },
+          existingTrades: currentCycle.longTrades.map(t => ({ entryTime: t.entryTime, entryPrice: t.entryPrice, exitTime: t.exitTime }))
+        });
       }
-
-      // ИСПРАВЛЯЕМ: НЕ добавляем к realizedPnl для лонга - будет пересчитан из всех сделок
     }
 
     // Принудительно закрываем шорт позицию
@@ -170,34 +207,38 @@ export class CycleManagerService {
         reason: reason
       };
 
-      // ИСПРАВЛЯЕМ: Добавляем закрытую сделку в массив сделок цикла
-      // Находим и обновляем существующую сделку или добавляем новую
+      // ИСПРАВЛЯЕМ: Ищем открытую сделку и обновляем её, НЕ добавляем дубликат
       const existingShortIndex = currentCycle.shortTrades.findIndex(t =>
-        t.entryTime === openShortTrade.entryTime && t.entryPrice === openShortTrade.entryPrice
+        t.entryTime === openShortTrade.entryTime &&
+        t.entryPrice === openShortTrade.entryPrice &&
+        !t.exitTime // Только открытые сделки
       );
 
       if (existingShortIndex !== -1) {
-        // Обновляем существующую сделку
+        // Обновляем существующую ОТКРЫТУЮ сделку
         currentCycle.shortTrades[existingShortIndex] = closedShort;
       } else {
-        // Добавляем новую закрытую сделку
-        currentCycle.shortTrades.push(closedShort);
+        console.error('❌ FORCE CLOSE: Could not find open SHORT trade to close!', {
+          searchFor: { entryTime: openShortTrade.entryTime, entryPrice: openShortTrade.entryPrice },
+          existingTrades: currentCycle.shortTrades.map(t => ({ entryTime: t.entryTime, entryPrice: t.entryPrice, exitTime: t.exitTime }))
+        });
       }
-
-      // ИСПРАВЛЯЕМ: НЕ добавляем к realizedPnl для лонга - будет пересчитан из всех сделок
     }
 
-    // ИСПРАВЛЯЕМ: Пересчитываем realizedPnl из всех сделок цикла
-    currentCycle.realizedPnl = [
-      ...currentCycle.longTrades,
-      ...currentCycle.shortTrades
-    ].reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
+    // ИСПРАВЛЯЕМ: Пересчитываем realizedPnl из всех закрытых сделок цикла
+    const allClosedTrades = [
+      ...currentCycle.longTrades.filter(t => t.exitTime),
+      ...currentCycle.shortTrades.filter(t => t.exitTime)
+    ];
+    currentCycle.realizedPnl = allClosedTrades.reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
 
     // Закрываем текущий цикл
     currentCycle.isActive = false;
     currentCycle.endTime = currentCandle.dateUTC2!;
     currentCycle.forceClosed = true;
     currentCycle.finalPnl = currentCycle.realizedPnl;
+
+    console.log(`🔄 CYCLE ${currentCycle.id} FORCE CLOSED: ${allClosedTrades.length} closed trades, Final PnL: ${currentCycle.finalPnl.toFixed(3)}%`);
 
     return { closedLong, closedShort };
   }
@@ -208,6 +249,15 @@ export class CycleManagerService {
     if (currentCycle) {
       currentCycle.isActive = false;
       currentCycle.endTime = currentCandle.dateUTC2!;
+
+      // Логируем окончание цикла
+      currentCycle.logs.push({
+        timestamp: currentCandle.dateUTC2!,
+        action: 'CYCLE_END',
+        details: `Final PnL: ${(currentCycle.finalPnl || currentCycle.realizedPnl).toFixed(3)}%`,
+        cycleRealizedPnl: currentCycle.finalPnl || currentCycle.realizedPnl,
+        openPositions: 'none'
+      });
     }
 
     // Создаем новый цикл
@@ -219,7 +269,14 @@ export class CycleManagerService {
       realizedPnl: 0,
       unrealizedPnl: 0,
       isActive: true,
-      forceClosed: false
+      forceClosed: false,
+      logs: [{
+        timestamp: currentCandle.dateUTC2!,
+        action: 'CYCLE_START',
+        details: 'Cycle started',
+        cycleRealizedPnl: 0,
+        openPositions: 'none'
+      }]
     };
 
     this.cycles.push(newCycle);
@@ -243,6 +300,46 @@ export class CycleManagerService {
       tradesCount: currentCycle.longTrades.length + currentCycle.shortTrades.length,
       isActive: currentCycle.isActive
     };
+  }
+
+  addLogToCurrentCycle(log: TradingCycleLog): void {
+    const currentCycle = this.getCurrentCycle();
+    currentCycle.logs.push(log);
+  }
+
+  logCycleEvent(
+    action: TradingCycleLog['action'],
+    details: string,
+    price?: number,
+    pnl?: number,
+    openLongTrade?: Trade | null,
+    openShortTrade?: ShortTrade | null
+  ): void {
+    const currentCycle = this.getCurrentCycle();
+
+    // Формируем строку открытых позиций
+    let openPositions = '';
+    if (openLongTrade && openShortTrade) {
+      openPositions = `LONG ${openLongTrade.unrealizedPnlPercent?.toFixed(2)}%, SHORT ${openShortTrade.unrealizedPnlPercent?.toFixed(2)}%`;
+    } else if (openLongTrade) {
+      openPositions = `LONG ${openLongTrade.unrealizedPnlPercent?.toFixed(2)}%`;
+    } else if (openShortTrade) {
+      openPositions = `SHORT ${openShortTrade.unrealizedPnlPercent?.toFixed(2)}%`;
+    } else {
+      openPositions = 'none';
+    }
+
+    const log: TradingCycleLog = {
+      timestamp: new Date().toISOString(),
+      action,
+      details,
+      price,
+      pnl,
+      cycleRealizedPnl: currentCycle.realizedPnl,
+      openPositions
+    };
+
+    this.addLogToCurrentCycle(log);
   }
 
   resetCycles(): void {

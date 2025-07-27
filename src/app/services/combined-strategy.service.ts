@@ -112,6 +112,16 @@ export class CombinedStrategyService {
       );
 
       if (cyclePnlCheck.shouldForceClose) {
+        // ОТЛАДКА: Детальная информация о принудительном закрытии
+        this.cycleManager.logCycleEvent(
+          'FORCE_CLOSE',
+          `Realized: ${cyclePnlCheck.currentCycleRealizedPnl.toFixed(2)}% + Unrealized: ${cyclePnlCheck.currentUnrealizedPnl.toFixed(2)}% = ${cyclePnlCheck.totalCurrentPnl.toFixed(2)}%`,
+          current.close,
+          cyclePnlCheck.totalCurrentPnl,
+          openLongTrade,
+          openShortTrade
+        );
+
         // Принудительно закрываем все позиции и завершаем цикл
         const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
           openLongTrade,
@@ -120,13 +130,30 @@ export class CombinedStrategyService {
           'CYCLE_PROFIT_THRESHOLD_REACHED'
         );
 
+        console.log(`  Positions after closing:`);
         if (closedLong) {
+          this.cycleManager.logCycleEvent(
+            'LONG_CLOSED',
+            `Forced close: ${openLongTrade!.entryPrice} → ${current.close}`,
+            current.close,
+            closedLong.pnlPercent!,
+            null,
+            openShortTrade
+          );
           longClosedTrades.push(closedLong);
           allClosedTrades.push(closedLong);
           openLongTrade = null;
         }
 
         if (closedShort) {
+          this.cycleManager.logCycleEvent(
+            'SHORT_CLOSED',
+            `Forced close: ${openShortTrade!.entryPrice} → ${current.close}`,
+            current.close,
+            closedShort.pnlPercent!,
+            openLongTrade,
+            null
+          );
           shortClosedTrades.push(closedShort);
           allClosedTrades.push(closedShort);
           openShortTrade = null;
@@ -161,11 +188,46 @@ export class CombinedStrategyService {
           openLongTrade.pnlPercent = currentPnlPercent;
           openLongTrade.reason = 'EMA_TOUCH_WITH_PROFIT';
 
+          // НОВОЕ: Сохраняем контекст открытого шорта на момент закрытия
+          openLongTrade.openShortOnExit = openShortTrade ? {
+            entryPrice: openShortTrade.entryPrice,
+            entryTime: openShortTrade.entryTime,
+            hasAveraging: openShortTrade.hasAveraging,
+            unrealizedPnl: openShortTrade.unrealizedPnlPercent
+          } : undefined;
+
           longClosedTrades.push(openLongTrade);
           allClosedTrades.push(openLongTrade);
           this.cycleManager.addClosedTradeToCurrentCycle(openLongTrade);
 
+          console.log(`📈 CYCLE ${this.cycleManager.getCurrentCycleStats().cycleNumber} - LONG CLOSED at ${current.dateUTC2}:`);
+          console.log(`  Entry: ${openLongTrade.entryPrice} → Exit: ${current.close} | PnL: +${currentPnlPercent.toFixed(2)}%`);
+
+          const cycleAfterClose = this.cycleManager.getCurrentCycleStats();
+          console.log(`  Cycle Status: Realized ${cycleAfterClose.realizedPnl.toFixed(2)}% | Open: ${openShortTrade ? 'SHORT ' + openShortTrade.unrealizedPnlPercent?.toFixed(2) + '%' : 'none'}`);
+
           openLongTrade = null;
+
+          // ИСПРАВЛЯЕМ: Проверяем принудительное закрытие СРАЗУ после закрытия сделки
+          const postCloseCheck = this.cycleManager.checkCyclePnl(null, openShortTrade, current);
+          if (postCloseCheck.shouldForceClose) {
+            console.log(`🔄 CYCLE SHOULD CLOSE after LONG trade: Total PnL ${postCloseCheck.totalCurrentPnl.toFixed(2)}% > ${postCloseCheck.threshold}%`);
+
+            // Принудительно закрываем оставшиеся позиции
+            const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
+              null, openShortTrade, current, 'CYCLE_PROFIT_THRESHOLD_REACHED'
+            );
+
+            if (closedShort) {
+              shortClosedTrades.push(closedShort);
+              allClosedTrades.push(closedShort);
+              openShortTrade = null;
+            }
+
+            forcedClosures++;
+            this.cycleManager.startNewCycle(current);
+            continue;
+          }
         } else {
           // Проверяем усреднение для лонга
           if (!openLongTrade.hasAveraging) {
@@ -177,6 +239,17 @@ export class CombinedStrategyService {
               openLongTrade.averagingPrice = current.close;
               openLongTrade.averagingTime = current.dateUTC2!;
               openLongTrade.averagingEma = current.ema;
+
+              // Логирование усреднения
+              const newAvgPrice = (openLongTrade.entryPrice + current.close) / 2;
+              this.cycleManager.logCycleEvent(
+                'LONG_AVERAGING',
+                `${openLongTrade.entryPrice} + ${current.close} = avg ${newAvgPrice.toFixed(2)} (drop ${priceDropPercent.toFixed(1)}%)`,
+                current.close,
+                undefined,
+                openLongTrade,
+                openShortTrade
+              );
             }
           }
         }
@@ -202,11 +275,46 @@ export class CombinedStrategyService {
           openShortTrade.pnlPercent = currentPnlPercent;
           openShortTrade.reason = 'EMA_TOUCH_WITH_PROFIT';
 
+          // НОВОЕ: Сохраняем контекст открытого лонга на момент закрытия
+          openShortTrade.openLongOnExit = openLongTrade ? {
+            entryPrice: openLongTrade.entryPrice,
+            entryTime: openLongTrade.entryTime,
+            hasAveraging: openLongTrade.hasAveraging,
+            unrealizedPnl: openLongTrade.unrealizedPnlPercent
+          } : undefined;
+
           shortClosedTrades.push(openShortTrade);
           allClosedTrades.push(openShortTrade);
           this.cycleManager.addClosedTradeToCurrentCycle(openShortTrade);
 
+          console.log(`📉 CYCLE ${this.cycleManager.getCurrentCycleStats().cycleNumber} - SHORT CLOSED at ${current.dateUTC2}:`);
+          console.log(`  Entry: ${openShortTrade.entryPrice} → Exit: ${current.close} | PnL: +${currentPnlPercent.toFixed(2)}%`);
+
+          const cycleAfterClose = this.cycleManager.getCurrentCycleStats();
+          console.log(`  Cycle Status: Realized ${cycleAfterClose.realizedPnl.toFixed(2)}% | Open: ${openLongTrade ? 'LONG ' + openLongTrade.unrealizedPnlPercent?.toFixed(2) + '%' : 'none'}`);
+
           openShortTrade = null;
+
+          // ИСПРАВЛЯЕМ: Проверяем принудительное закрытие СРАЗУ после закрытия сделки
+          const postCloseCheck = this.cycleManager.checkCyclePnl(openLongTrade, null, current);
+          if (postCloseCheck.shouldForceClose) {
+            console.log(`🔄 CYCLE SHOULD CLOSE after SHORT trade: Total PnL ${postCloseCheck.totalCurrentPnl.toFixed(2)}% > ${postCloseCheck.threshold}%`);
+
+            // Принудительно закрываем оставшиеся позиции
+            const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
+              openLongTrade, null, current, 'CYCLE_PROFIT_THRESHOLD_REACHED'
+            );
+
+            if (closedLong) {
+              longClosedTrades.push(closedLong);
+              allClosedTrades.push(closedLong);
+              openLongTrade = null;
+            }
+
+            forcedClosures++;
+            this.cycleManager.startNewCycle(current);
+            continue;
+          }
         } else {
           // Проверяем усреднение для шорта
           if (!openShortTrade.hasAveraging) {
@@ -218,6 +326,17 @@ export class CombinedStrategyService {
               openShortTrade.averagingPrice = current.close;
               openShortTrade.averagingTime = current.dateUTC2!;
               openShortTrade.averagingEma = current.ema;
+
+              // Логирование усреднения
+              const newAvgPrice = (openShortTrade.entryPrice + current.close) / 2;
+              this.cycleManager.logCycleEvent(
+                'SHORT_AVERAGING',
+                `${openShortTrade.entryPrice} + ${current.close} = avg ${newAvgPrice.toFixed(2)} (rise ${priceRisePercent.toFixed(1)}%)`,
+                current.close,
+                undefined,
+                openLongTrade,
+                openShortTrade
+              );
             }
           }
         }
@@ -239,10 +358,27 @@ export class CombinedStrategyService {
             hasAveraging: false,
             currentPrice: current.close,
             currentTime: current.dateUTC2!,
-            unrealizedPnlPercent: 0
+            unrealizedPnlPercent: 0,
+            // НОВОЕ: Сохраняем контекст открытого шорта
+            openShortOnEntry: openShortTrade ? {
+              entryPrice: openShortTrade.entryPrice,
+              entryTime: openShortTrade.entryTime,
+              hasAveraging: openShortTrade.hasAveraging,
+              unrealizedPnl: openShortTrade.unrealizedPnlPercent
+            } : undefined
           };
 
           this.cycleManager.addTradeToCurrentCycle(openLongTrade);
+
+          // Логирование входа
+          this.cycleManager.logCycleEvent(
+            'LONG_ENTRY',
+            `Entry: ${current.close} | RSI: ${current.rsi.toFixed(1)}`,
+            current.close,
+            0,
+            openLongTrade,
+            openShortTrade
+          );
         }
       }
 
@@ -262,10 +398,27 @@ export class CombinedStrategyService {
             hasAveraging: false,
             currentPrice: current.close,
             currentTime: current.dateUTC2!,
-            unrealizedPnlPercent: 0
+            unrealizedPnlPercent: 0,
+            // НОВОЕ: Сохраняем контекст открытого лонга
+            openLongOnEntry: openLongTrade ? {
+              entryPrice: openLongTrade.entryPrice,
+              entryTime: openLongTrade.entryTime,
+              hasAveraging: openLongTrade.hasAveraging,
+              unrealizedPnl: openLongTrade.unrealizedPnlPercent
+            } : undefined
           };
 
           this.cycleManager.addTradeToCurrentCycle(openShortTrade);
+
+          // Логирование входа
+          this.cycleManager.logCycleEvent(
+            'SHORT_ENTRY',
+            `Entry: ${current.close} | RSI: ${current.rsi.toFixed(1)}`,
+            current.close,
+            0,
+            openLongTrade,
+            openShortTrade
+          );
         }
       }
     }

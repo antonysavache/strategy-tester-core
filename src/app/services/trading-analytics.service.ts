@@ -16,6 +16,7 @@ export interface CycleAnalytics {
   totalPnl: number;
   forceClosed: boolean;
   tradeCount: number;
+  logs: any[]; // ИСПРАВЛЯЕМ: добавляем логи
 }
 
 export interface TradingSessionAnalytics {
@@ -105,7 +106,8 @@ export class TradingAnalyticsService {
         unrealizedPnl,
         totalPnl: cycle.realizedPnl + unrealizedPnl,
         forceClosed: cycle.forceClosed,
-        tradeCount: allTrades.length
+        tradeCount: allTrades.length,
+        logs: cycle.logs || [] // ИСПРАВЛЯЕМ: передаем логи из цикла
       };
     });
 
