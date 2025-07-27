@@ -298,6 +298,7 @@ export class CycleManagerService {
   logCycleEvent(
     action: TradingCycleLog['action'],
     details: string,
+    currentCandle: CandleWithIndicators,
     price?: number,
     pnl?: number,
     openLongTrade?: Trade | null,
@@ -318,7 +319,7 @@ export class CycleManagerService {
     }
 
     const log: TradingCycleLog = {
-      timestamp: new Date().toISOString(),
+      timestamp: currentCandle.dateUTC2!, // ИСПРАВЛЯЕМ: используем время свечи
       action,
       details,
       price,

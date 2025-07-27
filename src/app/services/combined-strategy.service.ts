@@ -281,6 +281,7 @@ export class CombinedStrategyService {
               this.cycleManager.logCycleEvent(
                 'LONG_AVERAGING',
                 `${openLongTrade.entryPrice} + ${current.close} = avg ${newAvgPrice.toFixed(2)} (drop ${priceDropPercent.toFixed(1)}%)`,
+                current,
                 current.close,
                 undefined,
                 openLongTrade,
@@ -368,6 +369,7 @@ export class CombinedStrategyService {
               this.cycleManager.logCycleEvent(
                 'SHORT_AVERAGING',
                 `${openShortTrade.entryPrice} + ${current.close} = avg ${newAvgPrice.toFixed(2)} (rise ${priceRisePercent.toFixed(1)}%)`,
+                current,
                 current.close,
                 undefined,
                 openLongTrade,
@@ -417,6 +419,7 @@ export class CombinedStrategyService {
           this.cycleManager.logCycleEvent(
             'LONG_ENTRY',
             `Entry: ${current.close} | RSI: ${current.rsi.toFixed(1)}`,
+            current,
             current.close,
             0,
             openLongTrade,
@@ -464,6 +467,7 @@ export class CombinedStrategyService {
           this.cycleManager.logCycleEvent(
             'SHORT_ENTRY',
             `Entry: ${current.close} | RSI: ${current.rsi.toFixed(1)}`,
+            current,
             current.close,
             0,
             openLongTrade,
