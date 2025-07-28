@@ -90,7 +90,8 @@ export class CycleManagerService {
   checkCyclePnl(
     openLongTrade: Trade | null,
     openShortTrade: ShortTrade | null,
-    currentCandle: CandleWithIndicators
+    currentCandle: CandleWithIndicators,
+    commissionPercent: number = 0 // НОВОЕ: параметр комиссии для расчета net PnL
   ): CyclePnlCheck {
     const currentCycle = this.getCurrentCycle();
 
@@ -102,13 +103,25 @@ export class CycleManagerService {
 
     currentCycle.realizedPnl = closedTrades.reduce((sum, trade) => sum + (trade.pnlPercent || 0), 0);
 
-    // Рассчитываем текущую нереализованную прибыль от открытых позиций
+    // Рассчитываем текущую нереализованную прибыль от открытых позиций (с учетом комиссии)
     let currentUnrealizedPnl = 0;
-    if (openLongTrade?.unrealizedPnlPercent) {
-      currentUnrealizedPnl += openLongTrade.unrealizedPnlPercent;
+    if (openLongTrade) {
+      const avgPrice = openLongTrade.hasAveraging ?
+        (openLongTrade.entryPrice + openLongTrade.averagingPrice!) / 2 :
+        openLongTrade.entryPrice;
+      const totalPositionSize = openLongTrade.hasAveraging ? 0.5 : 0.25;
+      const grossPnl = ((currentCandle.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+      const commission = commissionPercent * totalPositionSize;
+      currentUnrealizedPnl += grossPnl - commission;
     }
-    if (openShortTrade?.unrealizedPnlPercent) {
-      currentUnrealizedPnl += openShortTrade.unrealizedPnlPercent;
+    if (openShortTrade) {
+      const avgPrice = openShortTrade.hasAveraging ?
+        (openShortTrade.entryPrice + openShortTrade.averagingPrice!) / 2 :
+        openShortTrade.entryPrice;
+      const totalPositionSize = openShortTrade.hasAveraging ? 0.5 : 0.25;
+      const grossPnl = ((avgPrice - currentCandle.close) / avgPrice) * 100 * totalPositionSize;
+      const commission = commissionPercent * totalPositionSize;
+      currentUnrealizedPnl += grossPnl - commission;
     }
 
     // Обновляем нереализованный PnL в цикле
@@ -137,7 +150,8 @@ export class CycleManagerService {
     openLongTrade: Trade | null,
     openShortTrade: ShortTrade | null,
     currentCandle: CandleWithIndicators,
-    reason: string = 'PROFIT_THRESHOLD_REACHED'
+    reason: string = 'PROFIT_THRESHOLD_REACHED',
+    commissionPercent: number = 0 // НОВОЕ: параметр комиссии
   ): { closedLong: Trade | null, closedShort: ShortTrade | null } {
     const currentCycle = this.getCurrentCycle();
 
@@ -150,7 +164,9 @@ export class CycleManagerService {
         (openLongTrade.entryPrice + openLongTrade.averagingPrice!) / 2 :
         openLongTrade.entryPrice;
       const totalPositionSize = openLongTrade.hasAveraging ? 0.5 : 0.25;
-      const pnlPercent = ((currentCandle.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+      const pnlBeforeCommission = ((currentCandle.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+      const commission = commissionPercent * totalPositionSize;
+      const pnlPercent = pnlBeforeCommission - commission;
 
       closedLong = {
         ...openLongTrade,
@@ -159,7 +175,10 @@ export class CycleManagerService {
         exitEma: currentCandle.ema,
         averagePrice: avgPrice,
         totalPositionSize,
-        pnlPercent,
+        grossPnlPercent: pnlBeforeCommission, // НОВОЕ: валовая прибыль
+        commissionRate: commissionPercent, // НОВОЕ: ставка комиссии
+        commissionAmount: commission, // НОВОЕ: абсолютная сумма комиссии
+        pnlPercent, // чистая прибыль
         reason: reason
       };
 
@@ -175,9 +194,11 @@ export class CycleManagerService {
         currentCycle.longTrades[existingLongIndex] = closedLong;
 
         // Логируем принудительное закрытие LONG
+        const grossPnlForLong = pnlBeforeCommission;
+        const commissionForLong = commission;
         this.logCycleEvent(
           'FORCE_CLOSE',
-          `LONG closed: ${openLongTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | PnL: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
+          `LONG closed: ${openLongTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | Gross: ${grossPnlForLong >= 0 ? '+' : ''}${grossPnlForLong.toFixed(2)}% - Commission: ${commissionForLong.toFixed(2)}% = Net: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
           currentCandle,
           currentCandle.close,
           pnlPercent,
@@ -198,7 +219,9 @@ export class CycleManagerService {
         (openShortTrade.entryPrice + openShortTrade.averagingPrice!) / 2 :
         openShortTrade.entryPrice;
       const totalPositionSize = openShortTrade.hasAveraging ? 0.5 : 0.25;
-      const pnlPercent = ((avgPrice - currentCandle.close) / avgPrice) * 100 * totalPositionSize;
+      const pnlBeforeCommission = ((avgPrice - currentCandle.close) / avgPrice) * 100 * totalPositionSize;
+      const commission = commissionPercent * totalPositionSize;
+      const pnlPercent = pnlBeforeCommission - commission;
 
       closedShort = {
         ...openShortTrade,
@@ -207,7 +230,10 @@ export class CycleManagerService {
         exitEma: currentCandle.ema,
         averagePrice: avgPrice,
         totalPositionSize,
-        pnlPercent,
+        grossPnlPercent: pnlBeforeCommission, // НОВОЕ: валовая прибыль
+        commissionRate: commissionPercent, // НОВОЕ: ставка комиссии
+        commissionAmount: commission, // НОВОЕ: абсолютная сумма комиссии
+        pnlPercent, // чистая прибыль
         reason: reason
       };
 
@@ -223,9 +249,11 @@ export class CycleManagerService {
         currentCycle.shortTrades[existingShortIndex] = closedShort;
 
         // Логируем принудительное закрытие SHORT
+        const grossPnlForShort = pnlBeforeCommission;
+        const commissionForShort = commission;
         this.logCycleEvent(
           'FORCE_CLOSE',
-          `SHORT closed: ${openShortTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | PnL: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
+          `SHORT closed: ${openShortTrade.entryPrice.toFixed(6)} → ${currentCandle.close.toFixed(6)} | Gross: ${grossPnlForShort >= 0 ? '+' : ''}${grossPnlForShort.toFixed(2)}% - Commission: ${commissionForShort.toFixed(2)}% = Net: ${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`,
           currentCandle,
           currentCandle.close,
           pnlPercent,

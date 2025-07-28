@@ -57,8 +57,16 @@ import { CycleManagerService } from './services/cycle-manager.service';
           </select>
         </div>
         <div class="param-row">
+          <label for="emaPeriod">EMA Period:</label>
+          <input type="number" id="emaPeriod" [(ngModel)]="emaPeriod" min="10" max="300" step="1" />
+        </div>
+        <div class="param-row">
           <label for="emaDistance">EMA Distance %:</label>
           <input type="number" id="emaDistance" [(ngModel)]="emaDistancePercent" min="0.01" max="1.0" step="0.01" />
+        </div>
+        <div class="param-row">
+          <label for="commission">Commission %:</label>
+          <input type="number" id="commission" [(ngModel)]="commissionPercent" min="0" max="1.0" step="0.01" />
         </div>
         <button (click)="processData()" class="recalculate-btn">Recalculate with New Parameters</button>
       </div>
@@ -69,8 +77,8 @@ import { CycleManagerService } from './services/cycle-manager.service';
         <p>RSI Oversold: {{ rsiOversold }} | RSI Overbought: {{ rsiOverbought }}</p>
         <p>RSI Reversal Mode: {{ getRsiModeDescription(rsiReversalMode) }}</p>
         <p>EMA Distance: {{ emaDistancePercent }}% | Min Profit: {{ minProfitPercent }}% | Averaging Threshold: {{ averagingThreshold }}%</p>
-        <p>Cycle Profit Threshold: {{ cycleProfitThreshold }}%</p>
-        <p>EMA Period: 183</p>
+        <p>Cycle Profit Threshold: {{ cycleProfitThreshold }}% | Commission: {{ commissionPercent }}%</p>
+        <p>EMA Period: {{ emaPeriod }}</p>
       </div>
 
       <div class="cycles-container" *ngIf="sessionAnalytics">
@@ -84,6 +92,7 @@ import { CycleManagerService } from './services/cycle-manager.service';
           <p><strong>💰 Total Realized PnL:</strong> {{ sessionAnalytics.totalRealizedPnl | number:'1.2-2' }}%</p>
           <p><strong>💸 Total Unrealized PnL:</strong> {{ sessionAnalytics.totalUnrealizedPnl | number:'1.2-2' }}%</p>
           <p><strong>🏆 Total PnL:</strong> {{ sessionAnalytics.totalPnl | number:'1.2-2' }}%</p>
+          <p><strong>💳 Total Commission Paid:</strong> {{ sessionAnalytics.totalCommissionPaid | number:'1.2-2' }}%</p>
           <p><strong>📈 Win Rate:</strong> {{ sessionAnalytics.winRate | number:'1.1-1' }}%</p>
           <p><strong>🔄 Forced Closures:</strong> {{ sessionAnalytics.forcedClosures }}</p>
         </div>
@@ -179,6 +188,15 @@ import { CycleManagerService } from './services/cycle-manager.service';
                     <p *ngIf="trade.hasAveraging"><strong>Averaging:</strong> {{ trade.averagingPrice | number:'1.6-6' }} at {{ trade.averagingTime }}</p>
                     <p><strong>Exit:</strong> {{ trade.exitPrice | number:'1.6-6' }} at {{ trade.exitTime }}</p>
                     <p><strong>Position Size:</strong> {{ (trade.totalPositionSize || 0) * 100 }}% of deposit</p>
+                    <p *ngIf="trade.grossPnlPercent !== undefined && trade.commissionRate !== undefined && trade.commissionAmount !== undefined">
+                      <strong>PnL Breakdown:</strong>
+                      Gross {{ trade.grossPnlPercent >= 0 ? '+' : '' }}{{ trade.grossPnlPercent | number:'1.2-2' }}%
+                      - Commission {{ trade.commissionRate | number:'1.2-2' }}% ({{ trade.commissionAmount | number:'1.3-3' }}%)
+                      = Net {{ (trade.pnlPercent || 0) >= 0 ? '+' : '' }}{{ (trade.pnlPercent || 0) | number:'1.2-2' }}%
+                    </p>
+                    <p *ngIf="trade.grossPnlPercent === undefined || trade.commissionRate === undefined || trade.commissionAmount === undefined">
+                      <strong>Net PnL:</strong> {{ (trade.pnlPercent || 0) >= 0 ? '+' : '' }}{{ (trade.pnlPercent || 0) | number:'1.2-2' }}%
+                    </p>
                     <p><strong>Reason:</strong> {{ trade.reason }}</p>
                   </div>
                 </div>
@@ -291,6 +309,8 @@ export class TechnicalIndicatorsComponent {
   cycleProfitThreshold: number = 0.5; // 0.5% порог для принудительного закрытия цикла
   rsiReversalMode: 'strict' | 'relaxed' | 'zone_only' = 'strict'; // НОВОЕ: режим разворота RSI
   emaDistancePercent: number = 0.15; // НОВОЕ: расстояние до EMA в процентах
+  emaPeriod: number = 183; // НОВОЕ: период EMA
+  commissionPercent: number = 0.05; // НОВОЕ: комиссия в процентах (0.05% по умолчанию)
 
   constructor(
     private marketDataService: MarketDataService,
@@ -322,7 +342,7 @@ export class TechnicalIndicatorsComponent {
 
     // 2. Считаем индикаторы
     this.indicatorsService.calculateRSI(this.candles, this.rsiPeriod);
-    this.indicatorsService.calculateEMA(this.candles, 183);
+    this.indicatorsService.calculateEMA(this.candles, this.emaPeriod);
 
     // 3. Тестируем стратегии
     this.testStrategies();
@@ -337,7 +357,9 @@ export class TechnicalIndicatorsComponent {
       averagingThreshold: this.averagingThreshold,
       cycleProfitThreshold: this.cycleProfitThreshold,
       rsiReversalMode: this.rsiReversalMode, // НОВОЕ: передаем режим разворота
-      emaDistancePercent: this.emaDistancePercent // НОВОЕ: передаем расстояние до EMA
+      emaDistancePercent: this.emaDistancePercent, // НОВОЕ: передаем расстояние до EMA
+      emaPeriod: this.emaPeriod, // НОВОЕ: передаем период EMA
+      commissionPercent: this.commissionPercent // НОВОЕ: передаем комиссию
     };
 
     // Тестируем объединенную стратегию с управлением циклами

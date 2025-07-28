@@ -17,6 +17,12 @@ export interface CombinedStrategyParams {
 
   // НОВОЕ: Расстояние до EMA для фильтра входа
   emaDistancePercent: number; // 0.15% по умолчанию
+
+  // НОВОЕ: Период EMA
+  emaPeriod: number; // 183 по умолчанию
+
+  // НОВОЕ: Комиссия
+  commissionPercent: number; // 0.05% по умолчанию
 }
 
 export interface CombinedStrategyResults {
@@ -109,13 +115,15 @@ export class CombinedStrategyService {
     const longParams: StrategyParams = {
       rsiOversold: params.rsiOversold,
       minProfitPercent: params.minProfitPercent,
-      averagingThreshold: params.averagingThreshold
+      averagingThreshold: params.averagingThreshold,
+      commissionPercent: params.commissionPercent // НОВОЕ: передаем комиссию
     };
 
     const shortParams: ShortStrategyParams = {
       rsiOverbought: params.rsiOverbought,
       minProfitPercent: params.minProfitPercent,
-      averagingThreshold: params.averagingThreshold
+      averagingThreshold: params.averagingThreshold,
+      commissionPercent: params.commissionPercent // НОВОЕ: передаем комиссию
     };
 
     let openLongTrade: Trade | null = null;
@@ -137,13 +145,15 @@ export class CombinedStrategyService {
         continue;
       }
 
-      // Обновляем нереализованный PnL для открытых позиций
+      // Обновляем нереализованный PnL для открытых позиций с учетом комиссии
       if (openLongTrade) {
         const avgPrice = openLongTrade.hasAveraging ?
           (openLongTrade.entryPrice + openLongTrade.averagingPrice!) / 2 :
           openLongTrade.entryPrice;
         const totalPositionSize = openLongTrade.hasAveraging ? 0.5 : 0.25;
-        openLongTrade.unrealizedPnlPercent = ((current.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+        const pnlBeforeCommission = ((current.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+        const commission = params.commissionPercent * totalPositionSize;
+        openLongTrade.unrealizedPnlPercent = pnlBeforeCommission - commission;
         openLongTrade.currentPrice = current.close;
         openLongTrade.currentTime = current.dateUTC2!;
       }
@@ -153,7 +163,9 @@ export class CombinedStrategyService {
           (openShortTrade.entryPrice + openShortTrade.averagingPrice!) / 2 :
           openShortTrade.entryPrice;
         const totalPositionSize = openShortTrade.hasAveraging ? 0.5 : 0.25;
-        openShortTrade.unrealizedPnlPercent = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const pnlBeforeCommission = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const commission = params.commissionPercent * totalPositionSize;
+        openShortTrade.unrealizedPnlPercent = pnlBeforeCommission - commission;
         openShortTrade.currentPrice = current.close;
         openShortTrade.currentTime = current.dateUTC2!;
       }
@@ -162,7 +174,8 @@ export class CombinedStrategyService {
       const cyclePnlCheck: CyclePnlCheck = this.cycleManager.checkCyclePnl(
         openLongTrade,
         openShortTrade,
-        current
+        current,
+        params.commissionPercent // НОВОЕ: передаем комиссию
       );
 
       if (cyclePnlCheck.shouldForceClose) {
@@ -175,7 +188,8 @@ export class CombinedStrategyService {
           openLongTrade,
           openShortTrade,
           current,
-          'CYCLE_PROFIT_THRESHOLD_REACHED'
+          'CYCLE_PROFIT_THRESHOLD_REACHED',
+          params.commissionPercent // НОВОЕ: передаем комиссию
         );
 
         console.log(`  Positions after closing:`);
@@ -210,10 +224,14 @@ export class CombinedStrategyService {
           (openLongTrade.entryPrice + openLongTrade.averagingPrice!) / 2 :
           openLongTrade.entryPrice;
         const totalPositionSize = openLongTrade.hasAveraging ? 0.5 : 0.25;
-        const currentPnlPercent = ((current.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+        const pnlBeforeCommission = ((current.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
+        const commission = params.commissionPercent * totalPositionSize;
+        const currentPnlPercent = pnlBeforeCommission - commission;
 
         const priceHitEmaFromAbove = prev1.close > prev1.ema && current.close <= current.ema;
-        const profitCondition = currentPnlPercent >= params.minProfitPercent;
+        const requiredGrossProfit = params.minProfitPercent + (params.commissionPercent * totalPositionSize);
+        const grossProfitPercent = pnlBeforeCommission;
+        const profitCondition = grossProfitPercent >= requiredGrossProfit;
 
         if (priceHitEmaFromAbove && profitCondition) {
           openLongTrade.exitTime = current.dateUTC2!;
@@ -221,7 +239,10 @@ export class CombinedStrategyService {
           openLongTrade.exitEma = current.ema;
           openLongTrade.averagePrice = avgPrice;
           openLongTrade.totalPositionSize = totalPositionSize;
-          openLongTrade.pnlPercent = currentPnlPercent;
+          openLongTrade.grossPnlPercent = pnlBeforeCommission; // НОВОЕ: валовая прибыль
+          openLongTrade.commissionRate = params.commissionPercent; // НОВОЕ: ставка комиссии
+          openLongTrade.commissionAmount = commission; // НОВОЕ: абсолютная сумма комиссии
+          openLongTrade.pnlPercent = currentPnlPercent; // чистая прибыль
           openLongTrade.reason = 'EMA_TOUCH_WITH_PROFIT';
 
           // НОВОЕ: Сохраняем контекст открытого шорта на момент закрытия
@@ -239,7 +260,7 @@ export class CombinedStrategyService {
           // Логируем закрытие сделки с PnL и обновленным циклом
           this.cycleManager.logCycleEvent(
             'LONG_CLOSED',
-            `Exit: ${current.close.toFixed(6)} | PnL: +${currentPnlPercent.toFixed(2)}%`,
+            `Exit: ${current.close.toFixed(6)} | Gross: +${pnlBeforeCommission.toFixed(2)}% - Commission: ${commission.toFixed(2)}% = Net: +${currentPnlPercent.toFixed(2)}%`,
             current,
             current.close,
             currentPnlPercent,
@@ -256,13 +277,13 @@ export class CombinedStrategyService {
           openLongTrade = null;
 
           // ИСПРАВЛЯЕМ: Проверяем принудительное закрытие СРАЗУ после закрытия сделки
-          const postCloseCheck = this.cycleManager.checkCyclePnl(null, openShortTrade, current);
+          const postCloseCheck = this.cycleManager.checkCyclePnl(null, openShortTrade, current, params.commissionPercent);
           if (postCloseCheck.shouldForceClose) {
             console.log(`🔄 CYCLE SHOULD CLOSE after LONG trade: Total PnL ${postCloseCheck.totalCurrentPnl.toFixed(2)}% > ${postCloseCheck.threshold}%`);
 
             // Принудительно закрываем оставшиеся позиции
             const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
-              null, openShortTrade, current, 'CYCLE_PROFIT_THRESHOLD_REACHED'
+              null, openShortTrade, current, 'CYCLE_PROFIT_THRESHOLD_REACHED', params.commissionPercent
             );
 
             if (closedShort) {
@@ -309,10 +330,14 @@ export class CombinedStrategyService {
           (openShortTrade.entryPrice + openShortTrade.averagingPrice!) / 2 :
           openShortTrade.entryPrice;
         const totalPositionSize = openShortTrade.hasAveraging ? 0.5 : 0.25;
-        const currentPnlPercent = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const pnlBeforeCommission = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const commission = params.commissionPercent * totalPositionSize;
+        const currentPnlPercent = pnlBeforeCommission - commission;
 
         const priceHitEmaFromBelow = prev1.close < prev1.ema && current.close >= current.ema;
-        const profitCondition = currentPnlPercent >= params.minProfitPercent;
+        const requiredGrossProfit = params.minProfitPercent + (params.commissionPercent * totalPositionSize);
+        const grossProfitPercent = pnlBeforeCommission;
+        const profitCondition = grossProfitPercent >= requiredGrossProfit;
 
         if (priceHitEmaFromBelow && profitCondition) {
           openShortTrade.exitTime = current.dateUTC2!;
@@ -320,7 +345,10 @@ export class CombinedStrategyService {
           openShortTrade.exitEma = current.ema;
           openShortTrade.averagePrice = avgPrice;
           openShortTrade.totalPositionSize = totalPositionSize;
-          openShortTrade.pnlPercent = currentPnlPercent;
+          openShortTrade.grossPnlPercent = pnlBeforeCommission; // НОВОЕ: валовая прибыль
+          openShortTrade.commissionRate = params.commissionPercent; // НОВОЕ: ставка комиссии
+          openShortTrade.commissionAmount = commission; // НОВОЕ: абсолютная сумма комиссии
+          openShortTrade.pnlPercent = currentPnlPercent; // чистая прибыль
           openShortTrade.reason = 'EMA_TOUCH_WITH_PROFIT';
 
           // НОВОЕ: Сохраняем контекст открытого лонга на момент закрытия
@@ -338,7 +366,7 @@ export class CombinedStrategyService {
           // Логируем закрытие сделки с PnL и обновленным циклом
           this.cycleManager.logCycleEvent(
             'SHORT_CLOSED',
-            `Exit: ${current.close.toFixed(6)} | PnL: +${currentPnlPercent.toFixed(2)}%`,
+            `Exit: ${current.close.toFixed(6)} | Gross: +${pnlBeforeCommission.toFixed(2)}% - Commission: ${commission.toFixed(2)}% = Net: +${currentPnlPercent.toFixed(2)}%`,
             current,
             current.close,
             currentPnlPercent,
@@ -355,13 +383,13 @@ export class CombinedStrategyService {
           openShortTrade = null;
 
           // ИСПРАВЛЯЕМ: Проверяем принудительное закрытие СРАЗУ после закрытия сделки
-          const postCloseCheck = this.cycleManager.checkCyclePnl(openLongTrade, null, current);
+          const postCloseCheck = this.cycleManager.checkCyclePnl(openLongTrade, null, current, params.commissionPercent);
           if (postCloseCheck.shouldForceClose) {
             console.log(`🔄 CYCLE SHOULD CLOSE after SHORT trade: Total PnL ${postCloseCheck.totalCurrentPnl.toFixed(2)}% > ${postCloseCheck.threshold}%`);
 
             // Принудительно закрываем оставшиеся позиции
             const { closedLong, closedShort } = this.cycleManager.forceCloseCycle(
-              openLongTrade, null, current, 'CYCLE_PROFIT_THRESHOLD_REACHED'
+              openLongTrade, null, current, 'CYCLE_PROFIT_THRESHOLD_REACHED', params.commissionPercent
             );
 
             if (closedLong) {
@@ -508,7 +536,7 @@ export class CombinedStrategyService {
     } else if (currentCycle.isActive && (openLongTrade || openShortTrade)) {
       // Обновляем нереализованный PnL для открытого цикла
       const lastCandle = candles[candles.length - 1];
-      this.cycleManager.checkCyclePnl(openLongTrade, openShortTrade, lastCandle);
+      this.cycleManager.checkCyclePnl(openLongTrade, openShortTrade, lastCandle, params.commissionPercent);
       console.log(`🔄 CYCLE REMAINS OPEN: ${openLongTrade ? 'Long' : ''}${openLongTrade && openShortTrade ? '+' : ''}${openShortTrade ? 'Short' : ''} positions still active`);
     }
 

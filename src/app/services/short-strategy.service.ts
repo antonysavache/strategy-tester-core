@@ -5,6 +5,7 @@ export interface ShortStrategyParams {
   rsiOverbought: number;
   minProfitPercent: number;
   averagingThreshold: number;
+  commissionPercent: number; // НОВОЕ: комиссия в процентах
 }
 
 export interface ShortTrade {
@@ -22,7 +23,10 @@ export interface ShortTrade {
   exitEma?: number;
   averagePrice?: number;
   totalPositionSize?: number; // 0.25 (25%) или 0.5 (50%)
-  pnlPercent?: number; // PnL в процентах от депозита
+  pnlPercent?: number; // PnL в процентах от депозита (чистый, после комиссии)
+  grossPnlPercent?: number; // НОВОЕ: валовая прибыль до вычета комиссии
+  commissionRate?: number; // НОВОЕ: ставка комиссии (например, 0.05%)
+  commissionAmount?: number; // НОВОЕ: абсолютная сумма комиссии для этой позиции
   reason?: string;
   currentPrice?: number;
   currentTime?: string;
@@ -105,12 +109,16 @@ export class ShortStrategyService {
           totalPositionSize = 0.25; // 25% депозита
         }
 
-        // PnL для шорта в процентах от депозита = (средний_вход - выход) / средний_вход * 100 * размер_позиции
-        const currentPnlPercent = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        // PnL для шорта в процентах от депозита = (средний_вход - выход) / средний_вход * 100 * размер_позиции - комиссия
+        const pnlBeforeCommission = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const commission = params.commissionPercent * totalPositionSize; // комиссия пропорциональна размеру позиции
+        const currentPnlPercent = pnlBeforeCommission - commission;
 
-        // Условие закрытия: цена коснулась EMA снизу вверх И профит >= minProfitPercent
+        // Условие закрытия: цена коснулась EMA снизу вверх И валовой профит >= minProfitPercent + комиссия
         const priceHitEmaFromBelow = prev1.close < prev1.ema && current.close >= current.ema;
-        const profitCondition = currentPnlPercent >= params.minProfitPercent;
+        const requiredGrossProfit = params.minProfitPercent + (params.commissionPercent * totalPositionSize);
+        const grossProfitPercent = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+        const profitCondition = grossProfitPercent >= requiredGrossProfit;
         const shouldClose = priceHitEmaFromBelow && profitCondition;
 
         if (shouldClose) {
@@ -152,7 +160,10 @@ export class ShortStrategyService {
 
           openTrade.currentPrice = current.close;
           openTrade.currentTime = current.dateUTC2!;
-          openTrade.unrealizedPnlPercent = currentPnlPercent; // Уже учитывает размер позиции
+          // Обновляем unrealized PnL с учетом комиссии
+          const pnlBeforeCommission = ((avgPrice - current.close) / avgPrice) * 100 * totalPositionSize;
+          const commission = params.commissionPercent * totalPositionSize;
+          openTrade.unrealizedPnlPercent = pnlBeforeCommission - commission;
         }
       }
 

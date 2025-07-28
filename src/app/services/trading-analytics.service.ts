@@ -32,6 +32,7 @@ export interface TradingSessionAnalytics {
   totalUnrealizedPnl: number;
   totalPnl: number;
   totalTrades: number;
+  totalCommissionPaid: number; // НОВОЕ: общая потраченная комиссия
   winRate: number;
   profitFactor: number;
   maxDrawdown: number;
@@ -118,6 +119,9 @@ export class TradingAnalyticsService {
     const closedCycles = cycleAnalytics.filter(c => c.status === 'CLOSED');
     const forcedClosures = cycleAnalytics.filter(c => c.forceClosed).length;
 
+    // НОВОЕ: Рассчитываем общую потраченную комиссию
+    const totalCommissionPaid = this.calculateTotalCommission(allTrades, strategyParams.commissionPercent || 0);
+
     console.log('🔍 TOTALS: realizedPnl=', totalRealizedPnl, 'unrealizedPnl=', totalUnrealizedPnl, 'totalPnl=', totalRealizedPnl + totalUnrealizedPnl);
 
     const session: TradingSessionAnalytics = {
@@ -133,6 +137,7 @@ export class TradingAnalyticsService {
       totalUnrealizedPnl,
       totalPnl: totalRealizedPnl + totalUnrealizedPnl,
       totalTrades: allTrades.length,
+      totalCommissionPaid, // НОВОЕ: добавляем общую комиссию
       winRate: this.calculateWinRate(allTrades),
       profitFactor: this.calculateProfitFactor(allTrades),
       maxDrawdown: this.calculateMaxDrawdown(allTrades),
@@ -142,6 +147,19 @@ export class TradingAnalyticsService {
 
     this.sessions.push(session);
     return session;
+  }
+
+  private calculateTotalCommission(trades: (Trade | ShortTrade)[], commissionPercent: number): number {
+    // Считаем комиссию только для закрытых сделок
+    const closedTrades = trades.filter(t => t.exitTime);
+    let totalCommission = 0;
+
+    for (const trade of closedTrades) {
+      const positionSize = trade.totalPositionSize || (trade.hasAveraging ? 0.5 : 0.25);
+      totalCommission += commissionPercent * positionSize;
+    }
+
+    return totalCommission;
   }
 
   private calculateWinRate(trades: (Trade | ShortTrade)[]): number {
