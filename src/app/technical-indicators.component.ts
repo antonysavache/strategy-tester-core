@@ -8,6 +8,7 @@ import { ShortStrategyService, ShortStrategyParams } from './services/short-stra
 import { TradingAnalyticsService, TradingSessionAnalytics } from './services/trading-analytics.service';
 import { CombinedStrategyService, CombinedStrategyParams } from './services/combined-strategy.service';
 import { CycleManagerService } from './services/cycle-manager.service';
+import { TimeShiftService, TimeShiftParams, TimeShiftResults } from './services/time-shift.service';
 
 @Component({
   selector: 'app-technical-indicators',
@@ -68,7 +69,75 @@ import { CycleManagerService } from './services/cycle-manager.service';
           <label for="commission">Commission %:</label>
           <input type="number" id="commission" [(ngModel)]="commissionPercent" min="0" max="1.0" step="0.01" />
         </div>
+
+        <!-- НОВАЯ СЕКЦИЯ: Time Shift Parameters -->
+        <h4>🕒 Time Shift Parameters</h4>
+        <div class="param-row">
+          <label for="timeShiftEnabled">Enable Time Shifts:</label>
+          <input type="checkbox" id="timeShiftEnabled" [(ngModel)]="timeShiftEnabled" />
+          <span class="param-description">Split deposit into multiple parts with delayed entries</span>
+        </div>
+        <div class="param-row" *ngIf="timeShiftEnabled">
+          <label for="depositParts">Deposit Parts:</label>
+          <input type="number" id="depositParts" [(ngModel)]="depositParts" min="2" max="20" step="1" />
+          <span class="param-description">How many parts to split the deposit (default: 10)</span>
+        </div>
+        <div class="param-row" *ngIf="timeShiftEnabled">
+          <label for="entryIntervalDays">Entry Interval (days):</label>
+          <input type="number" id="entryIntervalDays" [(ngModel)]="entryIntervalDays" min="1" max="30" step="1" />
+          <span class="param-description">Days between each part's entry (default: 7)</span>
+        </div>
+
         <button (click)="processData()" class="recalculate-btn">Recalculate with New Parameters</button>
+      </div>
+
+      <!-- НОВАЯ СЕКЦИЯ: Time Shift Results Summary -->
+      <div class="time-shift-summary" *ngIf="timeShiftResults && timeShiftResults.enabled">
+        <h3>🕒 Time Shift Results</h3>
+
+        <div class="shift-overview">
+          <h4>📊 Configuration Overview</h4>
+          <p><strong>Deposit Parts:</strong> {{ timeShiftResults.activeParts }}/{{ timeShiftResults.params.depositParts }} active</p>
+          <p><strong>Entry Interval:</strong> {{ timeShiftResults.params.entryIntervalDays }} days</p>
+          <p><strong>Entry Period:</strong> {{ formatTime(timeShiftResults.firstEntryTime) }} to {{ formatTime(timeShiftResults.lastEntryTime) }}</p>
+          <p><strong>Each Part Size:</strong> {{ (100 / timeShiftResults.params.depositParts) | number:'1.1-1' }}% of total deposit</p>
+        </div>
+
+        <div class="shift-performance">
+          <h4>💰 Aggregated Performance</h4>
+          <p><strong>💰 Total Realized PnL:</strong> {{ timeShiftResults.totalRealizedPnl | number:'1.3-3' }}%</p>
+          <p><strong>💸 Total Unrealized PnL:</strong> {{ timeShiftResults.totalUnrealizedPnl | number:'1.3-3' }}%</p>
+          <p><strong>🏆 Total PnL:</strong> {{ timeShiftResults.totalPnl | number:'1.3-3' }}%</p>
+          <p><strong>📈 Average Return:</strong> {{ timeShiftResults.weightedAverageReturn | number:'1.3-3' }}%</p>
+        </div>
+
+        <div class="shift-statistics">
+          <h4>🔄 Cycle Statistics</h4>
+          <p><strong>Total Cycles:</strong> {{ timeShiftResults.totalCycles }}</p>
+          <p><strong>Closed Cycles:</strong> {{ timeShiftResults.totalClosedCycles }}</p>
+          <p><strong>Open Cycles:</strong> {{ timeShiftResults.totalOpenCycles }}</p>
+          <p><strong>Forced Closures:</strong> {{ timeShiftResults.totalForcedClosures }}</p>
+        </div>
+
+        <!-- Deposit Parts Breakdown -->
+        <div class="parts-breakdown">
+          <h4>📋 Deposit Parts Breakdown</h4>
+          <div class="parts-grid">
+            <div *ngFor="let part of timeShiftResults.parts" class="part-card" [ngClass]="getPartCardClass(part)">
+              <div class="part-header">
+                <h5>Part {{ part.partId }}</h5>
+                <span class="part-size">{{ (part.depositFraction * 100) | number:'1.1-1' }}%</span>
+              </div>
+              <div class="part-details">
+                <p><strong>Start Offset:</strong> {{ part.startOffset }} days</p>
+                <p><strong>Start Time:</strong> {{ formatTime(part.actualStartTime) }}</p>
+                <p><strong>PnL:</strong> <span [ngClass]="{'profit': part.strategyResults.totalPnl > 0, 'loss': part.strategyResults.totalPnl < 0}">{{ part.strategyResults.totalPnl | number:'1.3-3' }}%</span></p>
+                <p><strong>Cycles:</strong> {{ part.strategyResults.cycles.length }} ({{ getClosedCyclesCount(part.strategyResults.cycles) }} closed)</p>
+                <p><strong>Forced Closures:</strong> {{ part.strategyResults.forcedClosures }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="stats" *ngIf="candles.length > 0">
@@ -232,6 +301,33 @@ import { CycleManagerService } from './services/cycle-manager.service';
     .recalculate-btn { padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
     .recalculate-btn:hover { background-color: #218838; }
 
+    /* НОВЫЕ: Time Shift Parameters Styles */
+    .strategy-params h4 { margin-top: 20px; margin-bottom: 10px; color: #495057; font-size: 16px; }
+    .param-description { font-size: 12px; color: #6c757d; margin-left: 10px; font-style: italic; }
+    input[type="checkbox"] { width: auto; margin-right: 10px; }
+
+    /* НОВЫЕ: Time Shift Results Styles */
+    .time-shift-summary { background-color: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ffc107; }
+    .time-shift-summary h3 { margin-top: 0; color: #856404; }
+    .time-shift-summary h4 { color: #856404; margin-top: 15px; margin-bottom: 10px; }
+
+    .shift-overview, .shift-performance, .shift-statistics { margin-bottom: 15px; }
+    .shift-overview p, .shift-performance p, .shift-statistics p { margin: 5px 0; }
+
+    .parts-breakdown { margin-top: 20px; }
+    .parts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-top: 10px; }
+
+    .part-card { border: 1px solid #ddd; border-radius: 6px; padding: 12px; background-color: #fff; }
+    .part-card.part-profit { border-left: 4px solid #28a745; background-color: #f8fff8; }
+    .part-card.part-loss { border-left: 4px solid #dc3545; background-color: #fff8f8; }
+    .part-card.part-neutral { border-left: 4px solid #6c757d; background-color: #f8f9fa; }
+
+    .part-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .part-header h5 { margin: 0; color: #333; }
+    .part-size { background-color: #e9ecef; padding: 2px 6px; border-radius: 8px; font-size: 12px; color: #495057; }
+
+    .part-details p { margin: 4px 0; font-size: 13px; }
+
     /* Cycles Analytics Styles */
     .cycles-container { margin-top: 20px; }
     .cycles-container h3 { color: #333; margin-bottom: 20px; }
@@ -319,6 +415,7 @@ export class TechnicalIndicatorsComponent {
   csvData: string = '';
   candles: CandleWithIndicators[] = [];
   sessionAnalytics: TradingSessionAnalytics | null = null;
+  timeShiftResults: TimeShiftResults | null = null; // НОВОЕ: результаты с временными сдвигами
 
   // Параметры стратегии
   rsiPeriod: number = 10;
@@ -332,6 +429,11 @@ export class TechnicalIndicatorsComponent {
   emaPeriod: number = 183; // НОВОЕ: период EMA
   commissionPercent: number = 0.05; // НОВОЕ: комиссия в процентах (0.05% по умолчанию)
 
+  // НОВЫЕ: Параметры временных сдвигов
+  timeShiftEnabled: boolean = false; // Включены ли временные сдвиги
+  depositParts: number = 10; // На сколько частей разбить депозит
+  entryIntervalDays: number = 7; // Через сколько дней входить следующей частью
+
   constructor(
     private marketDataService: MarketDataService,
     private indicatorsService: IndicatorsService,
@@ -339,7 +441,8 @@ export class TechnicalIndicatorsComponent {
     private shortStrategyService: ShortStrategyService,
     private tradingAnalyticsService: TradingAnalyticsService,
     private combinedStrategyService: CombinedStrategyService,
-    private cycleManagerService: CycleManagerService
+    private cycleManagerService: CycleManagerService,
+    private timeShiftService: TimeShiftService // НОВОЕ: добавляем TimeShiftService
   ) {}
 
   onFileSelected(event: any): void {
@@ -382,25 +485,147 @@ export class TechnicalIndicatorsComponent {
       commissionPercent: this.commissionPercent // НОВОЕ: передаем комиссию
     };
 
-    // Тестируем объединенную стратегию с управлением циклами
-    const results = this.combinedStrategyService.testCombinedStrategy(this.candles, combinedParams);
+    // НОВОЕ: Параметры временных сдвигов
+    const timeShiftParams: TimeShiftParams = {
+      enabled: this.timeShiftEnabled,
+      depositParts: this.depositParts,
+      entryIntervalDays: this.entryIntervalDays
+    };
 
-    // Создаем аналитику сессии на основе циклов
-    const session = this.tradingAnalyticsService.createSessionFromCycles(
-      results.cycles,
+    // НОВОЕ: Тестируем стратегию с учетом временных сдвигов
+    this.timeShiftResults = this.timeShiftService.testStrategyWithTimeShifts(
+      this.candles,
       combinedParams,
-      results.currentOpenLong,
-      results.currentOpenShort
+      timeShiftParams
     );
 
-    // Сохраняем для отображения в UI
-    this.sessionAnalytics = session;
+    // Создаем аналитику сессии из результатов временных сдвигов
+    if (!this.timeShiftResults.enabled) {
+      // Если временные сдвиги отключены, используем обычную логику
+      const singlePartResults = this.timeShiftResults.parts[0].strategyResults;
+      const session = this.tradingAnalyticsService.createSessionFromCycles(
+        singlePartResults.cycles,
+        combinedParams,
+        singlePartResults.currentOpenLong,
+        singlePartResults.currentOpenShort
+      );
+      this.sessionAnalytics = session;
+    } else {
+      // Если временные сдвиги включены, создаем агрегированную сессию
+      this.sessionAnalytics = this.createAggregatedSessionAnalytics(this.timeShiftResults, combinedParams);
+    }
 
     // Выводим результаты в консоль
-    this.logCombinedResults(results, session);
+    this.logTimeShiftResults(this.timeShiftResults);
   }
 
-  // Метод для вывода результатов с фокусом на циклы
+  // НОВЫЕ: Методы для работы с временными сдвигами
+  private createAggregatedSessionAnalytics(
+    timeShiftResults: TimeShiftResults,
+    strategyParams: CombinedStrategyParams
+  ): TradingSessionAnalytics {
+    // Агрегируем циклы из всех частей депозита
+    const allCycles = timeShiftResults.parts.flatMap(part => part.strategyResults.cycles);
+
+    // Берем первую часть как базовую для создания сессии
+    const firstPart = timeShiftResults.parts[0];
+    const baseSession = this.tradingAnalyticsService.createSessionFromCycles(
+      firstPart.strategyResults.cycles,
+      strategyParams,
+      firstPart.strategyResults.currentOpenLong,
+      firstPart.strategyResults.currentOpenShort
+    );
+
+    // Создаем агрегированную сессию
+    const aggregatedSession: TradingSessionAnalytics = {
+      ...baseSession,
+      id: `time-shift-${Date.now()}`,
+      startTime: timeShiftResults.firstEntryTime,
+      endTime: this.candles[this.candles.length - 1]?.dateUTC2 || '',
+
+      // Агрегированные метрики
+      totalRealizedPnl: timeShiftResults.totalRealizedPnl,
+      totalUnrealizedPnl: timeShiftResults.totalUnrealizedPnl,
+      totalPnl: timeShiftResults.totalPnl,
+
+      totalCycles: timeShiftResults.totalCycles,
+      closedCycles: timeShiftResults.totalClosedCycles,
+      openCycles: timeShiftResults.totalOpenCycles,
+      forcedClosures: timeShiftResults.totalForcedClosures,
+
+      // Рассчитываем агрегированные статистики
+      totalTrades: timeShiftResults.parts.reduce((sum, part) =>
+        sum + part.strategyResults.totalClosedTrades.length, 0),
+
+      avgCyclePnl: timeShiftResults.totalClosedCycles > 0 ?
+        timeShiftResults.totalRealizedPnl / timeShiftResults.totalClosedCycles : 0,
+
+      // Простые метрики (можно улучшить)
+      winRate: baseSession.winRate, // Используем от первой части
+      profitFactor: baseSession.profitFactor, // Используем от первой части
+      maxDrawdown: Math.max(...timeShiftResults.parts.map(part =>
+        part.strategyResults.cycles.reduce((max, cycle) =>
+          Math.max(max, cycle.maxUnrealizedDrawdown), 0))),
+
+      cycles: allCycles.map((cycle, index) => ({
+        cycleId: cycle.id,
+        startTime: cycle.startTime,
+        endTime: cycle.endTime || '',
+        status: cycle.isActive ? 'OPEN' : 'CLOSED',
+        tradeCount: cycle.longTrades.length + cycle.shortTrades.length,
+        realizedPnl: cycle.realizedPnl,
+        unrealizedPnl: cycle.unrealizedPnl,
+        totalPnl: cycle.realizedPnl + cycle.unrealizedPnl,
+        forceClosed: cycle.forceClosed,
+        maxUnrealizedDrawdown: cycle.maxUnrealizedDrawdown,
+        maxLongDrawdown: cycle.maxLongDrawdown,
+        maxShortDrawdown: cycle.maxShortDrawdown,
+        allTrades: [...cycle.longTrades.filter(t => t.exitTime), ...cycle.shortTrades.filter(t => t.exitTime)],
+        openLongTrade: cycle.longTrades.find(t => !t.exitTime) || null,
+        openShortTrade: cycle.shortTrades.find(t => !t.exitTime) || null,
+        logs: cycle.logs || []
+      }))
+    };
+
+    return aggregatedSession;
+  }
+
+  private logTimeShiftResults(results: TimeShiftResults): void {
+    console.log('=== TIME-SHIFTED STRATEGY RESULTS ===');
+
+    if (!results.enabled) {
+      console.log('⚠️  Time shifts DISABLED - using standard single-deposit approach');
+      this.logCombinedResults(results.parts[0].strategyResults, this.sessionAnalytics);
+      return;
+    }
+
+    console.log(`🕒 TIME SHIFT CONFIGURATION:`);
+    console.log(`  📊 Deposit parts: ${results.params.depositParts}`);
+    console.log(`  ⏰ Entry interval: ${results.params.entryIntervalDays} days`);
+    console.log(`  🏦 Active parts: ${results.activeParts}/${results.params.depositParts}`);
+    console.log(`  📅 Entry period: ${results.firstEntryTime} to ${results.lastEntryTime}`);
+
+    console.log(`\n💰 AGGREGATED PERFORMANCE:`);
+    console.log(`  💰 Total Realized PnL: ${results.totalRealizedPnl.toFixed(3)}%`);
+    console.log(`  💸 Total Unrealized PnL: ${results.totalUnrealizedPnl.toFixed(3)}%`);
+    console.log(`  🏆 Total PnL: ${results.totalPnl.toFixed(3)}%`);
+    console.log(`  📈 Weighted Average Return: ${results.weightedAverageReturn.toFixed(3)}%`);
+
+    console.log(`\n🔄 CYCLE STATISTICS:`);
+    console.log(`  🔄 Total Cycles: ${results.totalCycles}`);
+    console.log(`  ✅ Closed Cycles: ${results.totalClosedCycles}`);
+    console.log(`  🔄 Open Cycles: ${results.totalOpenCycles}`);
+    console.log(`  ⚡ Forced Closures: ${results.totalForcedClosures}`);
+
+    console.log(`\n📋 DEPOSIT PARTS BREAKDOWN:`);
+    results.parts.forEach((part, index) => {
+      console.log(`\n--- Part ${part.partId} (${(part.depositFraction * 100).toFixed(1)}% of deposit) ---`);
+      console.log(`  📅 Start: Day ${part.startOffset} (${part.actualStartTime})`);
+      console.log(`  🏆 PnL: ${part.strategyResults.totalPnl.toFixed(3)}%`);
+      console.log(`  🔄 Cycles: ${part.strategyResults.cycles.length} (${part.strategyResults.cycles.filter(c => !c.isActive).length} closed)`);
+      console.log(`  ⚡ Forced: ${part.strategyResults.forcedClosures}`);
+    });
+  }
   private logCombinedResults(results: any, session: any): void {
     console.log('=== CYCLE-BASED TRADING ANALYTICS ===');
     console.log(`Total candles analyzed: ${this.candles.length}`);
@@ -495,6 +720,22 @@ export class TechnicalIndicatorsComponent {
       'CYCLE_END': 'log-cycle-end'
     };
     return classes[action] || '';
+  }
+
+  // НОВЫЙ: Метод для определения CSS класса карточки части депозита
+  getPartCardClass(part: any): string {
+    if (part.strategyResults.totalPnl > 0) {
+      return 'part-profit';
+    } else if (part.strategyResults.totalPnl < 0) {
+      return 'part-loss';
+    }
+    return 'part-neutral';
+  }
+
+  // НОВЫЙ: Метод для подсчета закрытых циклов
+  getClosedCyclesCount(cycles: any[]): number {
+    if (!cycles) return 0;
+    return cycles.filter(c => !c.isActive).length;
   }
 
   // НОВЫЙ: Описание режима разворота RSI
