@@ -17,6 +17,9 @@ export interface CycleAnalytics {
   forceClosed: boolean;
   tradeCount: number;
   logs: any[]; // ИСПРАВЛЯЕМ: добавляем логи
+  maxUnrealizedDrawdown: number; // НОВОЕ: максимальная нереализованная просадка общего баланса цикла
+  maxLongDrawdown: number; // НОВОЕ: максимальная просадка по LONG позиции
+  maxShortDrawdown: number; // НОВОЕ: максимальная просадка по SHORT позиции
 }
 
 export interface TradingSessionAnalytics {
@@ -108,7 +111,10 @@ export class TradingAnalyticsService {
         totalPnl: cycle.realizedPnl + unrealizedPnl,
         forceClosed: cycle.forceClosed,
         tradeCount: allTrades.length,
-        logs: cycle.logs || [] // ИСПРАВЛЯЕМ: передаем логи из цикла
+        logs: cycle.logs || [], // ИСПРАВЛЯЕМ: передаем логи из цикла
+        maxUnrealizedDrawdown: cycle.maxUnrealizedDrawdown || 0, // НОВОЕ: передаем максимальную просадку общего баланса
+        maxLongDrawdown: cycle.maxLongDrawdown || 0, // НОВОЕ: передаем максимальную просадку LONG позиции
+        maxShortDrawdown: cycle.maxShortDrawdown || 0 // НОВОЕ: передаем максимальную просадку SHORT позиции
       };
     });
 

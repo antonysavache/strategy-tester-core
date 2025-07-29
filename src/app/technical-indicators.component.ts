@@ -110,6 +110,15 @@ import { CycleManagerService } from './services/cycle-manager.service';
                 <span><strong>💰 Realized PnL:</strong> {{ cycle.realizedPnl | number:'1.2-2' }}%</span>
                 <span><strong>💸 Unrealized PnL:</strong> {{ cycle.unrealizedPnl | number:'1.2-2' }}%</span>
                 <span><strong>🏆 Total PnL:</strong> {{ cycle.totalPnl | number:'1.2-2' }}%</span>
+                <span><strong>📉 Cycle Drawdown:</strong> <span class="drawdown-value">{{ cycle.maxUnrealizedDrawdown | number:'1.2-2' }}%</span></span>
+                <span *ngIf="cycle.maxLongDrawdown > 0"><strong>📉 LONG Drawdown:</strong> <span class="drawdown-value">{{ cycle.maxLongDrawdown | number:'1.2-2' }}%</span></span>
+                <span *ngIf="cycle.maxShortDrawdown > 0"><strong>📉 SHORT Drawdown:</strong> <span class="drawdown-value">{{ cycle.maxShortDrawdown | number:'1.2-2' }}%</span></span>
+              </div>
+              <div class="drawdown-info" *ngIf="cycle.maxLongDrawdown > 0 || cycle.maxShortDrawdown > 0 || cycle.maxUnrealizedDrawdown > 0">
+                <strong>ℹ️ Drawdown Explanation:</strong><br>
+                • <strong>Cycle Drawdown ({{ cycle.maxUnrealizedDrawdown | number:'1.2-2' }}%)</strong> - максимальный минус общего баланса цикла (реальная просадка депозита)<br>
+                <span *ngIf="cycle.maxLongDrawdown > 0">• <strong>LONG Drawdown ({{ cycle.maxLongDrawdown | number:'1.2-2' }}%)</strong> - максимальный минус по LONG позиции (может компенсироваться плюсом SHORT)<br></span>
+                <span *ngIf="cycle.maxShortDrawdown > 0">• <strong>SHORT Drawdown ({{ cycle.maxShortDrawdown | number:'1.2-2' }}%)</strong> - максимальный минус по SHORT позиции (может компенсироваться плюсом LONG)</span>
               </div>
             </div>
 
@@ -276,6 +285,17 @@ import { CycleManagerService } from './services/cycle-manager.service';
 
     .profit { color: #2e7d32; }
     .loss { color: #d32f2f; }
+    .drawdown-value { color: #ff6b35; font-weight: bold; }
+
+    .drawdown-info {
+      font-size: 11px;
+      color: #666;
+      font-style: italic;
+      margin-top: 5px;
+      padding: 5px;
+      background-color: #f0f0f0;
+      border-radius: 4px;
+    }
 
     /* Cycle Log Styles */
     .cycle-log { margin-top: 15px; }

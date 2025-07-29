@@ -25,6 +25,9 @@ export interface TradingCycle {
   forceClosed: boolean; // Закрыт принудительно по достижению 0.5%
   finalPnl?: number;
   logs: TradingCycleLog[]; // НОВОЕ: логи событий цикла
+  maxUnrealizedDrawdown: number; // НОВОЕ: максимальная нереализованная просадка общего баланса цикла
+  maxLongDrawdown: number; // НОВОЕ: максимальная просадка по LONG позиции
+  maxShortDrawdown: number; // НОВОЕ: максимальная просадка по SHORT позиции
 }
 
 export interface CyclePnlCheck {
@@ -57,7 +60,10 @@ export class CycleManagerService {
         unrealizedPnl: 0,
         isActive: true,
         forceClosed: false,
-        logs: [] // НОВОЕ: инициализируем пустой массив логов
+        logs: [], // НОВОЕ: инициализируем пустой массив логов
+        maxUnrealizedDrawdown: 0, // НОВОЕ: инициализируем максимальную просадку общего баланса
+        maxLongDrawdown: 0, // НОВОЕ: инициализируем максимальную просадку LONG позиции
+        maxShortDrawdown: 0 // НОВОЕ: инициализируем максимальную просадку SHORT позиции
       };
       this.cycles.push(activeCycle);
     }
@@ -105,6 +111,9 @@ export class CycleManagerService {
 
     // Рассчитываем текущую нереализованную прибыль от открытых позиций (с учетом комиссии)
     let currentUnrealizedPnl = 0;
+    let longPnl = 0;
+    let shortPnl = 0;
+
     if (openLongTrade) {
       const avgPrice = openLongTrade.hasAveraging ?
         (openLongTrade.entryPrice + openLongTrade.averagingPrice!) / 2 :
@@ -112,8 +121,18 @@ export class CycleManagerService {
       const totalPositionSize = openLongTrade.hasAveraging ? 0.5 : 0.25;
       const grossPnl = ((currentCandle.close - avgPrice) / avgPrice) * 100 * totalPositionSize;
       const commission = commissionPercent * totalPositionSize;
-      currentUnrealizedPnl += grossPnl - commission;
+      longPnl = grossPnl - commission;
+      currentUnrealizedPnl += longPnl;
+
+      // НОВОЕ: Отслеживаем максимальную просадку LONG позиции
+      if (longPnl < 0) {
+        const longDrawdown = Math.abs(longPnl);
+        if (longDrawdown > currentCycle.maxLongDrawdown) {
+          currentCycle.maxLongDrawdown = longDrawdown;
+        }
+      }
     }
+
     if (openShortTrade) {
       const avgPrice = openShortTrade.hasAveraging ?
         (openShortTrade.entryPrice + openShortTrade.averagingPrice!) / 2 :
@@ -121,14 +140,34 @@ export class CycleManagerService {
       const totalPositionSize = openShortTrade.hasAveraging ? 0.5 : 0.25;
       const grossPnl = ((avgPrice - currentCandle.close) / avgPrice) * 100 * totalPositionSize;
       const commission = commissionPercent * totalPositionSize;
-      currentUnrealizedPnl += grossPnl - commission;
+      shortPnl = grossPnl - commission;
+      currentUnrealizedPnl += shortPnl;
+
+      // НОВОЕ: Отслеживаем максимальную просадку SHORT позиции
+      if (shortPnl < 0) {
+        const shortDrawdown = Math.abs(shortPnl);
+        if (shortDrawdown > currentCycle.maxShortDrawdown) {
+          currentCycle.maxShortDrawdown = shortDrawdown;
+        }
+      }
     }
 
     // Обновляем нереализованный PnL в цикле
     currentCycle.unrealizedPnl = currentUnrealizedPnl;
 
-    // Общий PnL цикла = реализованный (из закрытых сделок) + нереализованный (от открытых)
+    // НОВОЕ: Отслеживаем максимальную нереализованную просадку ОБЩЕГО БАЛАНСА ЦИКЛА
+    // Считаем общий PnL включая нереализованный
     const totalCurrentPnl = currentCycle.realizedPnl + currentUnrealizedPnl;
+
+    // ВАЖНО: Просадка общего баланса - это когда весь цикл в минусе
+    // Даже если одна позиция в минусе на 12%, но другая в плюсе на 13%,
+    // то общая просадка будет 0%, а не 12%
+    if (totalCurrentPnl < 0) {
+      const currentDrawdown = Math.abs(totalCurrentPnl);
+      if (currentDrawdown > currentCycle.maxUnrealizedDrawdown) {
+        currentCycle.maxUnrealizedDrawdown = currentDrawdown;
+      }
+    }
 
     // ИСПРАВЛЯЕМ: ПРАВИЛЬНАЯ логика принудительного закрытия цикла
     // Цикл закрывается ТОЛЬКО когда общий PnL > Cycle Profit Threshold (0.5%)
@@ -313,6 +352,9 @@ export class CycleManagerService {
       unrealizedPnl: 0,
       isActive: true,
       forceClosed: false,
+      maxUnrealizedDrawdown: 0, // НОВОЕ: инициализируем максимальную просадку общего баланса
+      maxLongDrawdown: 0, // НОВОЕ: инициализируем максимальную просадку LONG позиции
+      maxShortDrawdown: 0, // НОВОЕ: инициализируем максимальную просадку SHORT позиции
       logs: [{
         timestamp: currentCandle.dateUTC2!,
         action: 'CYCLE_START',
